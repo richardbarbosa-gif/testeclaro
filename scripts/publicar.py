@@ -6,13 +6,13 @@ Criptografa os meses processados e gera os arquivos que o dashboard lê.
         -> site/data/AAAA-MM.bin    (AES-256-GCM, gzip antes de cifrar)
         -> site/data/meses.json     (manifesto: lista de meses + parâmetros do KDF)
 
-A senha vem da variável de ambiente DASH_SENHA ou é pedida no terminal.
-Ela NUNCA é gravada no repositório.
+Credencial = login + senha (DASH_LOGIN / DASH_SENHA, ou pedidos no terminal).
+O login é normalizado (sem espaços, minúsculo). Nada disso é gravado no repositório.
 
 Uso:
-    DASH_SENHA='...' python3 scripts/publicar.py            # publica/atualiza meses
-    DASH_SENHA='...' python3 scripts/publicar.py --extrair  # .bin -> dados/processado (recupera texto puro)
-    DASH_SENHA='antiga' NOVA_SENHA='nova' python3 scripts/publicar.py --trocar-senha
+    DASH_LOGIN='nome@claro.com.br' DASH_SENHA='...' python3 scripts/publicar.py            # publica/atualiza
+    DASH_LOGIN=... DASH_SENHA=... python3 scripts/publicar.py --extrair  # .bin -> dados/processado
+    DASH_LOGIN=... DASH_SENHA=... [NOVO_LOGIN=...] NOVA_SENHA=... python3 scripts/publicar.py --trocar-senha
 
 Formato do .bin: IV (12 bytes) || ciphertext+tag. AAD = id do mês ("2026-10"),
 o que impede trocar o arquivo de um mês pelo de outro.
@@ -43,16 +43,23 @@ PROCESSADO = RAIZ / "dados" / "processado"
 SITE_DATA = RAIZ / "site" / "data"
 MANIFESTO = SITE_DATA / "meses.json"
 ITERACOES = 600_000
-SENHA_MIN = 10
+SENHA_MIN = 6        # mínimo absoluto
+SENHA_FORTE = 12     # abaixo disso, avisa
+CREDENCIAL = "login+senha"
 
 
 def b64(b: bytes) -> str:
     return base64.b64encode(b).decode()
 
 
-def derivar(senha: str, salt: bytes, iteracoes: int) -> bytes:
+def credencial(login: str, senha: str) -> str:
+    """Espelha credencial() em site/assets/js/cripto.js."""
+    return f"{login.strip().lower()}\n{senha}"
+
+
+def derivar(segredo: str, salt: bytes, iteracoes: int) -> bytes:
     kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=iteracoes)
-    return kdf.derive(senha.encode("utf-8"))
+    return kdf.derive(segredo.encode("utf-8"))
 
 
 def cifrar(chave: bytes, mes: str, dados: dict) -> bytes:
@@ -70,6 +77,19 @@ def ler_manifesto() -> dict | None:
     return json.loads(MANIFESTO.read_text(encoding="utf-8")) if MANIFESTO.exists() else None
 
 
+def pedir_credencial(var_login: str, var_senha: str, rotulo: str, confirmar: bool, login_padrao: str | None = None) -> str:
+    login = os.environ.get(var_login) or login_padrao or input(f"Login ({rotulo}): ").strip()
+    if not login:
+        sys.exit("Informe o login.")
+    senha = pedir_senha(var_senha, f"Senha ({rotulo})", confirmar)
+    if len(senha) < SENHA_MIN:
+        sys.exit(f"Use uma senha com pelo menos {SENHA_MIN} caracteres.")
+    if len(senha) < SENHA_FORTE:
+        print(f"AVISO: senha fraca (< {SENHA_FORTE} caracteres). Quem obtiver o .bin consegue quebrá-la offline. "
+              "Use só temporariamente e NÃO versione site/data/ no git.")
+    return credencial(login, senha)
+
+
 def pedir_senha(var: str, rotulo: str, confirmar: bool) -> str:
     senha = os.environ.get(var)
     if not senha:
@@ -79,9 +99,11 @@ def pedir_senha(var: str, rotulo: str, confirmar: bool) -> str:
     return senha
 
 
-def chave_do_manifesto(man: dict, senha: str) -> bytes:
+def chave_do_manifesto(man: dict, segredo: str) -> bytes:
     kdf = man["kdf"]
-    chave = derivar(senha, base64.b64decode(kdf["salt"]), kdf["iter"])
+    if kdf.get("credencial") != CREDENCIAL:  # manifesto antigo: só senha
+        segredo = segredo.split("\n", 1)[-1]
+    chave = derivar(segredo, base64.b64decode(kdf["salt"]), kdf["iter"])
     # valida contra um mês já publicado: evita cifrar meses novos com outra senha
     for item in man["meses"]:
         arq = SITE_DATA / item["arquivo"]
@@ -90,7 +112,7 @@ def chave_do_manifesto(man: dict, senha: str) -> bytes:
                 decifrar(chave, item["mes"], arq.read_bytes())
                 return chave
             except InvalidTag:
-                sys.exit("Senha incorreta para os meses já publicados. Nada foi alterado.")
+                sys.exit("Login/senha incorretos para os meses já publicados. Nada foi alterado.")
     return chave
 
 
@@ -98,7 +120,7 @@ def gravar_manifesto(salt: bytes, iteracoes: int, meses: list[dict]):
     meses = sorted(meses, key=lambda m: m["mes"])
     MANIFESTO.write_text(json.dumps({
         "versao": 1,
-        "kdf": {"alg": "PBKDF2-SHA256", "iter": iteracoes, "salt": b64(salt)},
+        "kdf": {"alg": "PBKDF2-SHA256", "iter": iteracoes, "salt": b64(salt), "credencial": CREDENCIAL},
         "cifra": "AES-256-GCM (gzip); arquivo = iv(12) || ct; AAD = mes",
         "atualizado_em": dt.datetime.now().isoformat(timespec="seconds"),
         "meses": meses,
@@ -111,9 +133,7 @@ def publicar():
         sys.exit(f"Nada em {PROCESSADO.relative_to(RAIZ)}. Rode antes: python3 scripts/processar.py planilha.xlsx")
     SITE_DATA.mkdir(parents=True, exist_ok=True)
     man = ler_manifesto()
-    senha = pedir_senha("DASH_SENHA", "Senha do dashboard", confirmar=man is None)
-    if len(senha) < SENHA_MIN:
-        sys.exit(f"Use uma senha com pelo menos {SENHA_MIN} caracteres.")
+    senha = pedir_credencial("DASH_LOGIN", "DASH_SENHA", "dashboard", confirmar=man is None)
     if man:
         salt, iteracoes = base64.b64decode(man["kdf"]["salt"]), man["kdf"]["iter"]
         chave = chave_do_manifesto(man, senha)
@@ -136,7 +156,7 @@ def publicar():
 
 def extrair():
     man = ler_manifesto() or sys.exit("Sem manifesto publicado.")
-    chave = chave_do_manifesto(man, pedir_senha("DASH_SENHA", "Senha do dashboard", False))
+    chave = chave_do_manifesto(man, pedir_credencial("DASH_LOGIN", "DASH_SENHA", "dashboard", False))
     PROCESSADO.mkdir(parents=True, exist_ok=True)
     for item in man["meses"]:
         dados = decifrar(chave, item["mes"], (SITE_DATA / item["arquivo"]).read_bytes())
@@ -146,10 +166,9 @@ def extrair():
 
 def trocar_senha():
     man = ler_manifesto() or sys.exit("Sem manifesto publicado.")
-    antiga = chave_do_manifesto(man, pedir_senha("DASH_SENHA", "Senha ATUAL", False))
-    nova = pedir_senha("NOVA_SENHA", "Senha NOVA", True)
-    if len(nova) < SENHA_MIN:
-        sys.exit(f"Use uma senha com pelo menos {SENHA_MIN} caracteres.")
+    atual = pedir_credencial("DASH_LOGIN", "DASH_SENHA", "ATUAL", False)
+    antiga = chave_do_manifesto(man, atual)
+    nova = pedir_credencial("NOVO_LOGIN", "NOVA_SENHA", "NOVA", True, login_padrao=atual.split("\n", 1)[0])
     salt = secrets.token_bytes(16)
     chave = derivar(nova, salt, ITERACOES)
     for item in man["meses"]:

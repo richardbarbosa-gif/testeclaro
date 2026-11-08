@@ -17,8 +17,13 @@ function bytesParaB64(bytes) {
   return btoa(s);
 }
 
-export async function derivarChave(senha, kdf) {
-  const base = await crypto.subtle.importKey('raw', enc.encode(senha), 'PBKDF2', false, ['deriveKey']);
+/** Credencial = "login\nsenha" (login sem espaços e minúsculo). Espelha credencial() em publicar.py. */
+export function credencial(login, senha, kdf) {
+  return kdf.credencial === 'login+senha' ? `${String(login).trim().toLowerCase()}\n${senha}` : senha;
+}
+
+export async function derivarChave(login, senha, kdf) {
+  const base = await crypto.subtle.importKey('raw', enc.encode(credencial(login, senha, kdf)), 'PBKDF2', false, ['deriveKey']);
   return crypto.subtle.deriveKey(
     { name: 'PBKDF2', hash: 'SHA-256', salt: b64ParaBytes(kdf.salt), iterations: kdf.iter },
     base, { name: 'AES-GCM', length: 256 }, true, ['decrypt'],

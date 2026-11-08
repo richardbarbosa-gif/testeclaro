@@ -10,9 +10,16 @@ profissional e intuitivo. Idioma de tudo: **português do Brasil**.
 
 - **O repositório GitHub é PÚBLICO.** A planilha tem endereço completo e número de contrato de cliente.
 - **NUNCA commitar** `.xlsx`, `.csv`, `dados/` ou JSON em texto puro. O `.gitignore` já bloqueia; não force.
-- Só vai para o git/site o arquivo **criptografado** (`site/data/AAAA-MM.bin`, AES-256-GCM).
-- A **senha não fica no repositório**. Peça ao usuário quando precisar publicar. Ela é validada contra
-  os meses já publicados (o script recusa senha diferente, para não quebrar o site).
+- **`site/data/` também NÃO é versionado** (gitignore): os `.bin` cifrados ficam **só na Hostinger**.
+  Motivo: a credencial atual é fraca e temporária; arquivo cifrado com senha fraca num repo público
+  seria quebrável para sempre (o histórico do git não esquece). Na Hostinger ele é substituível.
+  (O `.bin` que ficou no 1º commit foi cifrado com uma senha forte antiga, já descartada — inofensivo.)
+- **Acesso = login + senha.** A chave AES vem de PBKDF2(`login minúsculo` + `\n` + `senha`). Não há servidor:
+  login/senha errados simplesmente não descriptografam. Login atual: e-mail corporativo do Richard;
+  **a senha não fica no repositório** — peça ao usuário. O `publicar.py` valida a credencial contra os
+  meses já publicados (recusa credencial diferente, para não quebrar o site).
+- A senha atual é **temporária e fraca** (pedido do usuário, só para apresentar). Lembre-o de trocar
+  por uma forte (`--trocar-senha`) assim que possível.
 - Toda string vinda dos dados entra no DOM via `textContent` (função `h()` em `app.js`). Nunca `innerHTML`.
 - CSP restritiva (só `'self'`): **não adicione CDN/fontes externas** sem ajustar `index.html` e `site/.htaccess`.
 
@@ -30,8 +37,8 @@ site/                      o que vai para a Hostinger (estático, sem build)
   assets/js/app.js         carga, filtros, todas as seções (sem dependências)
   assets/js/cripto.js      WebCrypto: PBKDF2 -> AES-GCM, gunzip
   assets/img/              logos (branco/vermelho com alpha), raios.svg (marca d'água), campanha
-  data/meses.json          manifesto (lista de meses + salt/iterações do KDF) — não é sigiloso
-  data/AAAA-MM.bin         dados do mês criptografados
+  data/meses.json          manifesto (lista de meses + salt/iterações do KDF)   ┐ NÃO versionados:
+  data/AAAA-MM.bin         dados do mês criptografados                         ┘ gerados e enviados à Hostinger
 ```
 
 Sem framework e sem build: HTML/CSS/JS puro (ES modules). Gráficos são HTML/CSS (barras, heatmap,
@@ -46,16 +53,19 @@ barras empilhadas, colunas). Python 3 + `openpyxl` + `cryptography` para os scri
        --base-regiao "AREA BIRIGUI=5200" --base-regiao "AREA ANDRADINA=4100"
    ```
    Confira no resumo impresso: nº de visitas, top códigos e avisos (colunas ignoradas, meses fora).
-2. Publique (pede a senha; ou `DASH_SENHA=...`):
+2. Publique (pede login/senha; ou variáveis de ambiente):
    ```bash
-   DASH_SENHA='...' python3 scripts/publicar.py
+   DASH_LOGIN='richard.barbosa@claro.com.br' DASH_SENHA='...' python3 scripts/publicar.py
    ```
+   Numa sessão nova `site/data/` estará vazio (não versionado): para manter os meses anteriores,
+   processe também as planilhas deles (peça ao usuário) ou baixe os `.bin`/`meses.json` do
+   `public_html/data` da Hostinger antes de publicar. Senão o deploy publica só o mês novo.
    Só os meses presentes em `dados/processado/` são (re)cifrados; os demais `.bin` ficam intactos.
-   Precisa reprocessar um mês antigo sem a planilha? `python3 scripts/publicar.py --extrair` devolve
-   o JSON em texto puro para `dados/processado/`. Trocar senha: `--trocar-senha` (usa `NOVA_SENHA`).
+   Reprocessar um mês sem a planilha: `--extrair` devolve o JSON puro para `dados/processado/`.
+   Trocar credencial: `--trocar-senha` (usa `NOVA_SENHA` e, opcional, `NOVO_LOGIN`).
 3. Teste local: `cd site && python3 -m http.server 8765` e abra `http://127.0.0.1:8765`
    (Playwright/Chromium já existem no ambiente; confira console sem erros e a seção Comparativo).
-4. Commit (só `site/`, `scripts/`, docs) → push → deploy na Hostinger (abaixo).
+4. Commit (código e docs; `site/data/` fica fora) → push → deploy na Hostinger (abaixo).
 
 O **comparativo** liga sozinho quando houver 2+ meses em `meses.json`. A **base de assinantes**
 pode vir no processamento (`--base-total`, `--base-regiao`) ou ser digitada no filtro do painel
@@ -107,6 +117,9 @@ A classificação roda **no navegador**: mudou regra → só republicar o site; 
 - Cada deploy substitui todo o conteúdo do site.
 
 ## Pendências / perguntas em aberto (confirmar com o Richard)
+
+- **Trocar a senha temporária** por uma forte (12+ caracteres) — `publicar.py --trocar-senha` + deploy.
+- Repositório público: sugerido ao usuário torná-lo privado (GitHub → Settings → Danger Zone).
 
 - Base de assinantes do DDD 18 (total e, se possível, por área) — virá depois (precisa de VPN).
 - `AREA PRESIDENTE` = Presidente Prudente, Venceslau ou Epitácio?

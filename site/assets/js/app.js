@@ -925,7 +925,7 @@ function mostrarLogin(msg = '') {
   $('#app').hidden = true;
   $('#login').hidden = false;
   $('#login-msg').textContent = msg;
-  $('#senha').focus();
+  $('#usuario').focus();
 }
 
 function ligarLogin() {
@@ -934,18 +934,20 @@ function ligarLogin() {
   const msg = $('#login-msg');
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    const login = $('#usuario').value.trim();
     const senha = $('#senha').value;
-    if (!senha) { msg.className = 'login__msg'; msg.textContent = 'Digite a senha.'; return; }
+    const pedeLogin = estado.manifesto.kdf.credencial === 'login+senha';
+    if ((pedeLogin && !login) || !senha) { msg.className = 'login__msg'; msg.textContent = pedeLogin ? 'Preencha login e senha.' : 'Digite a senha.'; return; }
     btn.disabled = true; btn.textContent = 'Abrindo…';
     msg.className = 'login__msg ok'; msg.textContent = 'Descriptografando os dados no seu navegador…';
     try {
-      const chave = await derivarChave(senha, estado.manifesto.kdf);
+      const chave = await derivarChave(login, senha, estado.manifesto.kdf);
       await abrir(chave);
       await guardarChave(chave, $('#lembrar').checked);
       $('#senha').value = '';
     } catch (err) {
       msg.className = 'login__msg';
-      msg.textContent = err.message === 'SENHA' ? 'Senha incorreta. Confira e tente de novo.' : 'Não foi possível abrir os dados. Verifique a conexão e tente novamente.';
+      msg.textContent = err.message === 'SENHA' ? 'Login ou senha incorretos. Confira e tente de novo.' : 'Não foi possível abrir os dados. Verifique a conexão e tente novamente.';
       if (err.message !== 'SENHA') console.error(err);
       $('#senha').select();
     } finally {

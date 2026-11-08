@@ -16,3 +16,6 @@ Thumbs.db
 __pycache__/
 *.pyc
 node_modules/
+
+# Dados publicados (cifrados) ficam SÓ na Hostinger — nunca no git (repo público)
+site/data/
