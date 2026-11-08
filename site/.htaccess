@@ -1,0 +1,40 @@
+# Ofensores de VT · DDD 18 — Hostinger (LiteSpeed/Apache)
+Options -Indexes
+DirectoryIndex index.html
+
+# HTTPS obrigatório
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTPS} !=on
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+</IfModule>
+
+<IfModule mod_headers.c>
+  # Painel interno: fora de buscadores e de arquivos
+  Header always set X-Robots-Tag "noindex, nofollow, noarchive, nosnippet"
+  Header always set Referrer-Policy "no-referrer"
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "DENY"
+  Header always set Permissions-Policy "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+  Header always set Strict-Transport-Security "max-age=31536000"
+  Header always set Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"
+
+  # HTML, JS, CSS e dados: sempre revalida (deploy aparece na hora)
+  <FilesMatch "\.(html|js|css|json|bin)$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+  # Imagens: cache de 7 dias
+  <FilesMatch "\.(png|jpg|svg|ico)$">
+    Header set Cache-Control "public, max-age=604800"
+  </FilesMatch>
+</IfModule>
+
+<IfModule mod_mime.c>
+  AddType application/octet-stream .bin
+  AddType text/javascript .js
+</IfModule>
+
+# Nada de arquivos ocultos ou de origem
+<FilesMatch "^\.|\.(py|md|xlsx|csv|zip)$">
+  Require all denied
+</FilesMatch>
