@@ -91,9 +91,12 @@ A classificação roda **no navegador**: mudou regra → só republicar o site; 
 - **Reincidência**: `LOG ≥ 1` (= nº de visitas anteriores do contrato); endereço = REGIAO + END_COMPLETO normalizado.
 - **Flags de qualidade** (`FLAGS`): indício de código errado ("baixou errado", "baixa errada"…), VT sem validação.
 
-## Deploy — Hostinger (plano Business, conta `u203058587`)
+## Deploy — Hostinger (plano Business)
 
 - Site: **https://palegoldenrod-shrew-176665.hostingersite.com** (domínio temporário, criado para este projeto).
+- `username` da conta: obtenha com `hosting_websites_list` filtrando por esse domínio (não versionar — repo público).
+- O ambiente de nuvem do Claude Code **não acessa** `*.hostingersite.com` (rede limitada); confirme o deploy
+  com `hosting_files_list-website-and-directories` e peça ao usuário para abrir o link.
 - Método: zip do **conteúdo** de `site/` (index.html na raiz do zip, incluindo `.htaccess`) →
   upload TUS (`hosting_files_generate-upload-url`) → `hosting_websites_deploy-static-site-archive`
   com `archive_path: "site.zip"`. Detalhes na skill `hostinger:deploy-to-hosting`.
