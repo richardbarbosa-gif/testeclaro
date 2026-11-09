@@ -2,21 +2,20 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow, noarchive">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; object-src 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; object-src 'none'">
   <meta name="theme-color" content="#E30613">
-  <title>Ofensores de VT · DDD 18</title>
-  <meta name="description" content="Painel interno de ofensores de visita técnica — DDD 18.">
+  <title>Ofensores de VT · Claro</title>
+  <meta name="description" content="Painel interno de ofensores de visita técnica — DDD 14 e DDD 18.">
   <link rel="icon" type="image/png" href="assets/img/favicon.png">
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="preload" href="assets/fonts/plus-jakarta-sans.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="assets/css/app.css">
   <script type="module" src="assets/js/app.js"></script>
 </head>
 <body>
-  <div class="marca-dagua" aria-hidden="true"></div>
-
   <!-- ========================= CARREGANDO ========================= -->
   <div id="carregando" class="carregando" role="status">
     <img src="assets/img/claro-logo-vermelho.png" alt="Claro" width="120" height="43">
@@ -30,10 +29,10 @@
       <p class="login__slogan">Dados que mostram<br><strong>onde agir primeiro.</strong></p>
     </aside>
     <section class="login__painel">
-      <form id="form-login" class="login__form" autocomplete="off" novalidate>
+      <form id="form-login" class="login__form" autocomplete="on" novalidate>
         <img class="login__logo" src="assets/img/claro-logo-vermelho.png" alt="Claro" width="132" height="48">
         <h1>Ofensores de Visita Técnica</h1>
-        <p class="login__sub">DDD 18 · painel interno de operações</p>
+        <p class="login__sub">DDD 14 e DDD 18 · painel interno de operações</p>
         <label class="campo" for="usuario">
           <span>Login</span>
           <input id="usuario" name="usuario" type="email" autocomplete="username" inputmode="email" required spellcheck="false" autocapitalize="off" placeholder="nome.sobrenome@claro.com.br">
@@ -49,147 +48,92 @@
         <p id="login-msg" class="login__msg" role="alert" aria-live="polite"></p>
         <p class="login__nota">
           <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5Zm-3 8V7a3 3 0 1 1 6 0v3H9Z"/></svg>
-          Os dados são criptografados (AES-256) e só são abertos no seu navegador, com a senha.
+          Os dados são criptografados (AES-256) e só são abertos no seu navegador.
         </p>
       </form>
     </section>
   </main>
 
-  <!-- ========================= DASHBOARD ========================= -->
+  <!-- ========================= PAINEL ========================= -->
   <div id="app" class="app" hidden>
-    <header class="topo">
-      <div class="topo__inner">
-        <img class="topo__logo" src="assets/img/claro-logo-branco.png" alt="Claro" width="98" height="35">
-        <div class="topo__titulo">
-          <h1>Ofensores de Visita Técnica</h1>
-          <p>DDD 18 · <span id="topo-periodo">—</span></p>
-        </div>
-        <div class="topo__acoes">
-          <label class="seletor-mes" for="f-mes">
-            <span class="sr-only">Mês</span>
-            <select id="f-mes"></select>
-          </label>
-          <button id="btn-imprimir" class="botao botao--fantasma" type="button" title="Imprimir / salvar em PDF">
-            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M7 3h10v4H7zM5 9h14a2 2 0 0 1 2 2v6h-4v4H7v-4H3v-6a2 2 0 0 1 2-2Zm4 7v3h6v-3H9Zm8-4.5a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z"/></svg>
-            <span class="rotulo-largo">PDF</span>
-          </button>
-          <button id="btn-sair" class="botao botao--fantasma" type="button" title="Sair (esquece a senha neste navegador)">
-            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h5v-2H5V5h5V3Zm6.6 4.4L15.2 8.8l2.2 2.2H9v2h8.4l-2.2 2.2 1.4 1.4L21.2 12l-4.6-4.6Z"/></svg>
-            <span class="rotulo-largo">Sair</span>
-          </button>
-        </div>
+    <!-- menu lateral (computador) -->
+    <aside class="lateral" aria-label="Menu principal">
+      <div class="lateral__marca">
+        <img src="assets/img/claro-logo-branco.png" alt="Claro" width="92" height="33">
+        <p>Ofensores de VT</p>
       </div>
-    </header>
+      <div class="ddd-switch" role="tablist" aria-label="DDD" data-ddd-switch></div>
+      <nav class="menu" id="menu" aria-label="Telas"></nav>
+      <div class="lateral__rodape">
+        <div class="usuario">
+          <span class="avatar" id="avatar" aria-hidden="true">RB</span>
+          <div><strong id="usuario-nome">—</strong><small id="usuario-email"></small></div>
+        </div>
+        <button class="botao-icone" type="button" data-acao="sair" title="Sair" aria-label="Sair"></button>
+      </div>
+    </aside>
 
-    <div class="barra" id="barra">
-      <div class="barra__inner">
-        <div class="filtros" role="group" aria-label="Filtros">
-          <label class="filtro" for="f-area"><span>Área</span><select id="f-area"></select></label>
-          <label class="filtro" for="f-parceira"><span>Parceira</span><select id="f-parceira"></select></label>
-          <label class="filtro" for="f-codigo"><span>Código</span><select id="f-codigo"></select></label>
-          <label class="filtro filtro--base" for="f-base">
-            <span>Base de assinantes</span>
-            <input id="f-base" type="number" inputmode="numeric" min="0" step="1" placeholder="informar">
-          </label>
-          <button id="btn-limpar" class="link-botao" type="button" hidden>Limpar filtros</button>
-        </div>
-        <nav class="ancoras" aria-label="Seções">
-          <a href="#s-resumo">Resumo</a>
-          <a href="#s-codigos">Códigos</a>
-          <a href="#s-motivos">Motivos</a>
-          <a href="#s-causas">Causa raiz</a>
-          <a href="#s-areas">Áreas</a>
-          <a href="#s-reincidencia">Reincidência</a>
-          <a href="#s-comparativo">Comparativo</a>
-          <a href="#s-base">Base</a>
-        </nav>
+    <div class="principal">
+      <!-- barra do celular -->
+      <div class="barra-mobile">
+        <img src="assets/img/claro-logo-branco.png" alt="Claro" width="70" height="25">
+        <div class="ddd-switch ddd-switch--claro" role="tablist" aria-label="DDD" data-ddd-switch></div>
       </div>
+
+      <header class="cabecalho">
+        <div class="cabecalho__titulo">
+          <p class="sobretitulo" id="sobretitulo">—</p>
+          <h1 id="titulo-view">Visão geral</h1>
+        </div>
+        <div class="cabecalho__acoes">
+          <label class="seletor-mes" for="f-mes"><span class="sr-only">Mês</span><select id="f-mes"></select></label>
+          <button class="botao botao--sec botao--filtros" type="button" id="btn-filtros" aria-controls="filtros" aria-expanded="false">
+            <span data-icone="filtro"></span> Filtros <b class="contador" id="contador-filtros" hidden>0</b>
+          </button>
+          <button class="botao botao--sec so-desktop" type="button" data-acao="pdf" title="Imprimir / salvar em PDF"><span data-icone="pdf"></span> PDF</button>
+        </div>
+      </header>
+
+      <!-- filtros: linha no computador, gaveta no celular -->
+      <div class="fundo-folha" id="fundo-filtros" hidden></div>
+      <section class="filtros" id="filtros" aria-label="Filtros">
+        <div class="filtros__cab">
+          <strong>Filtros</strong>
+          <button class="botao-icone botao-icone--escuro" type="button" id="btn-fechar-filtros" aria-label="Fechar filtros"></button>
+        </div>
+        <label class="filtro" for="f-area"><span>Cidade / área</span><select id="f-area"></select></label>
+        <label class="filtro" for="f-parceira"><span>Parceira</span><select id="f-parceira"></select></label>
+        <label class="filtro" for="f-codigo"><span>Código</span><select id="f-codigo"></select></label>
+        <label class="filtro filtro--base" for="f-base">
+          <span>Base de assinantes</span>
+          <input id="f-base" type="number" inputmode="numeric" min="0" step="1" placeholder="informar">
+        </label>
+        <div class="filtros__acoes">
+          <button id="btn-limpar" class="link-botao" type="button">Limpar filtros</button>
+          <button class="botao botao--primario so-mobile" type="button" id="btn-aplicar">Ver resultado</button>
+        </div>
+      </section>
+
+      <main class="conteudo" id="conteudo">
+        <section class="view" data-view="geral" aria-label="Visão geral"></section>
+        <section class="view" data-view="codigos" aria-label="Códigos de baixa"></section>
+        <section class="view" data-view="causas" aria-label="Causas relacionadas"></section>
+        <section class="view" data-view="cidades" aria-label="Cidades"></section>
+        <section class="view" data-view="reincidencia" aria-label="Reincidência e qualidade"></section>
+        <section class="view" data-view="comparativo" aria-label="Comparativo mensal"></section>
+        <section class="view" data-view="base" aria-label="Base de visitas"></section>
+      </main>
+
+      <footer class="rodape">
+        <p id="rodape-fonte"></p>
+        <p>Uso interno · dados criptografados (AES-256-GCM) · não compartilhe o acesso.</p>
+      </footer>
     </div>
 
-    <main class="conteudo">
-      <section id="s-resumo" class="secao" aria-labelledby="t-resumo">
-        <h2 id="t-resumo" class="sr-only">Resumo</h2>
-        <div id="resumo"></div>
-      </section>
-
-      <section id="s-codigos" class="secao" aria-labelledby="t-codigos">
-        <header class="secao__cab">
-          <div>
-            <h2 id="t-codigos">Ranking de códigos de baixa</h2>
-            <p>Código de baixa principal (coluna BX). Clique em um código para filtrar o painel inteiro por ele.</p>
-          </div>
-          <div class="legenda" id="legenda-familias"></div>
-        </header>
-        <div id="codigos" class="cartao"></div>
-      </section>
-
-      <section id="s-motivos" class="secao" aria-labelledby="t-motivos">
-        <header class="secao__cab">
-          <div>
-            <h2 id="t-motivos">Por que cada código ofendeu</h2>
-            <p>Motivo raiz extraído da <strong>observação do técnico</strong>. Quando a observação é vaga, usa a SUBFALHA registrada; sem nenhum dos dois, fica como “Sem informação”.</p>
-          </div>
-        </header>
-        <div id="motivos"></div>
-      </section>
-
-      <section id="s-causas" class="secao" aria-labelledby="t-causas">
-        <header class="secao__cab">
-          <div>
-            <h2 id="t-causas">Causa raiz consolidada</h2>
-            <p>Somando todos os códigos: o que realmente gerou as visitas. As cores mostram em qual tipo de intervenção cada causa caiu.</p>
-          </div>
-        </header>
-        <div id="causas"></div>
-      </section>
-
-      <section id="s-areas" class="secao" aria-labelledby="t-areas">
-        <header class="secao__cab">
-          <div>
-            <h2 id="t-areas">Impacto por área</h2>
-            <p>Coluna REGIAO. Em cada código, o ● marca a área mais impactada. Clique na área para filtrar.</p>
-          </div>
-        </header>
-        <div id="areas"></div>
-      </section>
-
-      <section id="s-reincidencia" class="secao" aria-labelledby="t-reinc">
-        <header class="secao__cab">
-          <div>
-            <h2 id="t-reinc">Reincidência e pontos críticos</h2>
-            <p>Endereços e NAPs que receberam mais de uma visita — onde a causa provavelmente não foi resolvida na primeira ida.</p>
-          </div>
-          <div id="reinc-escopo"></div>
-        </header>
-        <div id="reincidencia"></div>
-      </section>
-
-      <section id="s-comparativo" class="secao" aria-labelledby="t-comp">
-        <header class="secao__cab">
-          <div>
-            <h2 id="t-comp">Comparativo mensal</h2>
-            <p>O que mais aumentou e o que mais diminuiu entre dois meses publicados.</p>
-          </div>
-          <div id="comp-seletor"></div>
-        </header>
-        <div id="comparativo"></div>
-      </section>
-
-      <section id="s-base" class="secao" aria-labelledby="t-base">
-        <header class="secao__cab">
-          <div>
-            <h2 id="t-base">Base de visitas</h2>
-            <p>Todas as visitas do filtro atual, com a observação original do técnico.</p>
-          </div>
-        </header>
-        <div id="base" class="cartao"></div>
-      </section>
-    </main>
-
-    <footer class="rodape">
-      <p id="rodape-fonte"></p>
-      <p>Uso interno · dados criptografados (AES-256-GCM) · não compartilhe a senha fora da equipe.</p>
-    </footer>
+    <!-- abas do celular -->
+    <nav class="abas-mobile" id="abas-mobile" aria-label="Telas"></nav>
+    <div class="fundo-folha" id="fundo-mais" hidden></div>
+    <section class="folha-mais" id="folha-mais" hidden aria-label="Mais opções"></section>
   </div>
 
   <div id="tooltip" class="tooltip" role="tooltip" hidden></div>

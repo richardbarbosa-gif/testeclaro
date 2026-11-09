@@ -2,8 +2,8 @@
 """
 Criptografa os meses processados e gera os arquivos que o dashboard lê.
 
-    dados/processado/AAAA-MM.json  (texto puro, fora do git)
-        -> site/data/AAAA-MM.bin    (AES-256-GCM, gzip antes de cifrar)
+    dados/processado/DDD-AAAA-MM.json  (texto puro, fora do git)
+        -> site/data/DDD-AAAA-MM.bin    (AES-256-GCM, gzip antes de cifrar)
         -> site/data/meses.json     (manifesto: lista de meses + parâmetros do KDF)
 
 Credencial = login + senha (DASH_LOGIN / DASH_SENHA, ou pedidos no terminal).
@@ -14,8 +14,8 @@ Uso:
     DASH_LOGIN=... DASH_SENHA=... python3 scripts/publicar.py --extrair  # .bin -> dados/processado
     DASH_LOGIN=... DASH_SENHA=... [NOVO_LOGIN=...] NOVA_SENHA=... python3 scripts/publicar.py --trocar-senha
 
-Formato do .bin: IV (12 bytes) || ciphertext+tag. AAD = id do mês ("2026-10"),
-o que impede trocar o arquivo de um mês pelo de outro.
+Formato do .bin: IV (12 bytes) || ciphertext+tag. AAD = id ("14-2026-10"),
+o que impede trocar o arquivo de um mês/DDD pelo de outro.
 """
 from __future__ import annotations
 
@@ -109,7 +109,7 @@ def chave_do_manifesto(man: dict, segredo: str) -> bytes:
         arq = SITE_DATA / item["arquivo"]
         if arq.exists():
             try:
-                decifrar(chave, item["mes"], arq.read_bytes())
+                decifrar(chave, item.get("id", item["mes"]), arq.read_bytes())
                 return chave
             except InvalidTag:
                 sys.exit("Login/senha incorretos para os meses já publicados. Nada foi alterado.")
@@ -117,11 +117,11 @@ def chave_do_manifesto(man: dict, segredo: str) -> bytes:
 
 
 def gravar_manifesto(salt: bytes, iteracoes: int, meses: list[dict]):
-    meses = sorted(meses, key=lambda m: m["mes"])
+    meses = sorted(meses, key=lambda m: (str(m.get("ddd", "")), m["mes"]))
     MANIFESTO.write_text(json.dumps({
         "versao": 1,
         "kdf": {"alg": "PBKDF2-SHA256", "iter": iteracoes, "salt": b64(salt), "credencial": CREDENCIAL},
-        "cifra": "AES-256-GCM (gzip); arquivo = iv(12) || ct; AAD = mes",
+        "cifra": "AES-256-GCM (gzip); arquivo = iv(12) || ct; AAD = id",
         "atualizado_em": dt.datetime.now().isoformat(timespec="seconds"),
         "meses": meses,
     }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -137,19 +137,19 @@ def publicar():
     if man:
         salt, iteracoes = base64.b64decode(man["kdf"]["salt"]), man["kdf"]["iter"]
         chave = chave_do_manifesto(man, senha)
-        meses = {m["mes"]: m for m in man["meses"]}
+        meses = {m.get("id", m["mes"]): m for m in man["meses"]}
     else:
         salt, iteracoes = secrets.token_bytes(16), ITERACOES
         chave = derivar(senha, salt, iteracoes)
         meses = {}
     for f in fontes:
         dados = json.loads(f.read_text(encoding="utf-8"))
-        mes = dados["mes"]
-        blob = cifrar(chave, mes, dados)
-        (SITE_DATA / f"{mes}.bin").write_bytes(blob)
-        meses[mes] = {"mes": mes, "rotulo": dados["rotulo"], "arquivo": f"{mes}.bin",
-                      "visitas": len(dados["registros"])}
-        print(f"OK  {mes}  {len(dados['registros'])} visitas  ->  site/data/{mes}.bin ({len(blob) / 1024:.1f} KB)")
+        ident = dados.get("id", dados["mes"])
+        blob = cifrar(chave, ident, dados)
+        (SITE_DATA / f"{ident}.bin").write_bytes(blob)
+        meses[ident] = {"id": ident, "ddd": dados.get("ddd"), "mes": dados["mes"], "rotulo": dados["rotulo"],
+                        "arquivo": f"{ident}.bin", "visitas": len(dados["registros"])}
+        print(f"OK  {ident}  {len(dados['registros'])} visitas  ->  site/data/{ident}.bin ({len(blob) / 1024:.1f} KB)")
     gravar_manifesto(salt, iteracoes, list(meses.values()))
     print("Manifesto atualizado: site/data/meses.json")
 
@@ -159,9 +159,10 @@ def extrair():
     chave = chave_do_manifesto(man, pedir_credencial("DASH_LOGIN", "DASH_SENHA", "dashboard", False))
     PROCESSADO.mkdir(parents=True, exist_ok=True)
     for item in man["meses"]:
-        dados = decifrar(chave, item["mes"], (SITE_DATA / item["arquivo"]).read_bytes())
-        (PROCESSADO / f"{item['mes']}.json").write_text(json.dumps(dados, ensure_ascii=False), encoding="utf-8")
-        print(f"OK  {item['mes']} -> dados/processado/{item['mes']}.json")
+        ident = item.get("id", item["mes"])
+        dados = decifrar(chave, ident, (SITE_DATA / item["arquivo"]).read_bytes())
+        (PROCESSADO / f"{ident}.json").write_text(json.dumps(dados, ensure_ascii=False), encoding="utf-8")
+        print(f"OK  {ident} -> dados/processado/{ident}.json")
 
 
 def trocar_senha():
@@ -173,8 +174,9 @@ def trocar_senha():
     chave = derivar(nova, salt, ITERACOES)
     for item in man["meses"]:
         arq = SITE_DATA / item["arquivo"]
-        arq.write_bytes(cifrar(chave, item["mes"], decifrar(antiga, item["mes"], arq.read_bytes())))
-        print(f"OK  {item['mes']} recriptografado")
+        ident = item.get("id", item["mes"])
+        arq.write_bytes(cifrar(chave, ident, decifrar(antiga, ident, arq.read_bytes())))
+        print(f"OK  {ident} recriptografado")
     gravar_manifesto(salt, ITERACOES, man["meses"])
 
 
