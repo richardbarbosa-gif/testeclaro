@@ -35,15 +35,24 @@ site/                  vai inteiro para a Hostinger (estático, sem build)
   data/                (não versionado) meses.json + .bin cifrados
 ```
 
-## Telas (rota `#/<ddd>/<tela>`)
+## Telas e navegação
 
-`geral` (hero, KPIs, natureza das causas, leitura executiva, top códigos/causas/cidades) ·
-`codigos` (ranking, motivos por código; destaques 566/589/584/203) ·
+Rota completa no endereço: `#/<ddd>/<tela>?mes=&area=&parc=&cod=&mot=&eixo=&flag=` (só parâmetros não vazios;
+o mês mais recente não vai na URL). **Todo clique de aprofundamento usa `ir({...})`** — vira um passo no
+histórico. O botão **← Voltar** (trilha no cabeçalho, `renderTrilha`) desfaz o último passo e **restaura a
+rolagem** (`estado.posicoes`); o voltar/avançar do navegador funciona igual. A trilha mostra
+"Vendo: Cidade … × · Código … ×" (× remove aquele filtro). Nunca altere `estado.area/codigo/...` direto: use `ir()`.
+
+`geral` (hero com "Set → Out", KPIs com "era X em set", natureza, leitura executiva, top códigos/causas/cidades) ·
+`codigos` (com código escolhido, a **página do código** abre no topo; depois ranking e destaques 566/589/584/203) ·
 `causas` (natureza, **mapa de causas** treemap, cartões "tudo o que está relacionado", matriz causas × cidades) ·
-`cidades` (cartão por cidade com insights vs média do DDD e mês anterior; matriz códigos × cidades; CSV "resumo por cidade") ·
+`cidades` (com cidade escolhida, a **página da cidade** abre no topo: leitura completa, grupos, códigos, "o que mais mudou";
+depois cartões das outras cidades, matriz códigos × cidades e CSV "resumo por cidade") ·
 `reincidencia` (endereços, NAPs, qualidade do apontamento) ·
-`comparativo` (maior alta / maior queda, gráfico divergente, antes × depois, causas, motivos, cidades, evolução;
-se o DDD atual tem 1 mês, o menu abre o comparativo do DDD que tem 2+) · `base` (tabela/cartões, busca, CSV).
+`comparativo` (resumo grande "Setembro 323 → Outubro 379 · ▲ 56 visitas a mais" + frase; listas "o que mais subiu /
+caiu" com o motivo que puxou; indicadores "era X em set"; tabelas **Setembro | Outubro | Diferença** por código,
+cidade e grupo de causa; evolução só com 3+ meses. Se o DDD atual tem 1 mês, o menu abre o DDD que tem 2+) ·
+`base` (tabela/cartões, busca, CSV).
 No celular (<1024px): barra vermelha com troca de DDD, filtros em gaveta, abas fixas (Geral, Códigos, Causas, Cidades, Mais).
 
 ## Fluxo mensal (ex.: chegaram as planilhas de novembro)
@@ -101,9 +110,24 @@ Obrigatórias: `BX, REGIAO, Observação, Data da Agenda`. Aliases em `COLUNAS` 
 - Método: zip do **conteúdo** de `site/` (com `.htaccess`) → `hosting_files_generate-upload-url` (TUS) →
   `hosting_websites_deploy-static-site-archive` com `archive_path: "site.zip"`. Cada deploy substitui o site.
 
+## Linguagem das comparações (pedido do usuário: "fácil de enxergar")
+
+- Sempre explícito, com os dois meses: `comparacao(a, b, mesA, mesB)` → "Set 8 → Out 27 · ▲ subiu 19".
+- Frases: "Subiu de 35 em setembro para 66 em outubro — o que mais cresceu foi …". Nomes de mês por extenso.
+- Evite "+238%" (só mostre % quando faz sentido) e "p.p." (use "pts" no selo e "era X% em setembro" no texto).
+
 ## Pendências (confirmar com o Richard)
 
 - **Trocar a senha temporária** por uma forte; considerar tornar o repositório privado.
 - Base de assinantes por DDD (total e por área) — para taxa de VT e p.p.
 - `AREA PRESIDENTE` (DDD 18) = Prudente, Venceslau ou Epitácio? Dicionário oficial dos códigos.
 - DDD14set linha 150: só observação, demais colunas vazias — dado deslocado na planilha original.
+
+## Convenções
+
+- **Ao terminar qualquer mudança: atualize este CLAUDE.md, faça commit/push e publique na Hostinger** (pedido do usuário).
+- Ao preencher um elemento com partes opcionais use `montar(el, ...)` (ignora null — `replaceChildren(null)` escreve "null" na tela).
+- Código e textos em português; nomes de função/variável em português.
+- Antes de publicar: sintaxe como `.mjs`, Chromium em todas as telas dos dois DDDs, console sem erros,
+  nenhum "null/undefined/NaN" visível, celular (iPhone 13) sem rolagem horizontal.
+- Commits pequenos e descritivos; nunca incluir dados de cliente.

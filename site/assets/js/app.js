@@ -27,6 +27,8 @@ function h(tag, props, ...kids) {
   }
   return el;
 }
+/** Preenche o elemento ignorando partes vazias (null/false). */
+const montar = (el, ...partes) => el.replaceChildren(...partes.flat(Infinity).filter((x) => x != null && x !== false));
 /** "texto com **negrito**" -> <span> com <strong>, sempre via textContent. */
 function rico(txt) {
   const el = h('span');
@@ -51,6 +53,7 @@ const ICONES = {
   fechar: 'M6 6l12 12M18 6L6 18',
   busca: 'M10.5 4a6.5 6.5 0 1 0 0 13a6.5 6.5 0 0 0 0-13ZM20 20l-4.8-4.8',
   download: 'M12 4v11M7 10l5 5 5-5M5 20h14',
+  voltar: 'M19 12H5M11 18l-6-6 6-6',
 };
 function icone(nome, tam) {
   const NS = 'http://www.w3.org/2000/svg';
@@ -73,12 +76,16 @@ const fPct = (x, d = 1) => `${fDec(x * 100, d)}%`;
 const fPctMin = (x) => (x > 0 && x < 0.01 ? '<1%' : fPct(x, 0));
 const sinal = (x) => (x > 0 ? '+' : x < 0 ? '−' : '±');
 const fSinal = (n) => `${sinal(n)}${fInt(Math.abs(n))}`;
-const fPPdif = (x, d = 1) => `${sinal(x)}${fDec(Math.abs(x), d)} p.p.`;
+const fPPdif = (x, d = 1) => `${sinal(x)}${fDec(Math.abs(x), d)} pts`;
 const fData = (iso) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}` : '—');
 const plural = (n, um, varios) => `${fInt(n)} ${n === 1 ? um : varios}`;
 const vts = (n) => plural(n, 'VT', 'VTs');
 const MESES_CURTOS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 const mesCurto = (id) => `${MESES_CURTOS[+id.slice(5, 7) - 1]}/${id.slice(2, 4)}`;
+const MESES_LONGOS = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const mesNome = (id) => MESES_LONGOS[+id.slice(5, 7) - 1];
+const mesNomeCap = (id) => { const n = mesNome(id); return n[0].toUpperCase() + n.slice(1); };
+const mes3 = (id) => mesNomeCap(id).slice(0, 3);
 
 function contar(regs, chave) {
   const m = new Map();
@@ -141,6 +148,12 @@ const estado = {
   tabela: { busca: '', motivo: '', eixo: '', flag: '', pagina: 0 },
   usuario: '',
   ligado: false,
+  pilha: [], // endereços anteriores (para o botão Voltar)
+  posicoes: new Map(), // rolagem de cada endereço visitado
+  rolarPara: null,
+  voltandoPeloBotao: false,
+  ultimaNav: null,
+  compTodos: false,
 };
 
 /* ------------------------------------------------------------------ preparação dos dados */
@@ -282,6 +295,18 @@ function delta(atual, anterior, { tipo = 'abs', subirRuim = true, mesAnt, comPct
   return h('span', { class: `delta delta--${dir}`, title: mesAnt ? `vs ${mesAnt}` : null }, `${seta} ${txt}`);
 }
 
+/** Antes → depois explícito: "Set 8 → Out 27 · ▲ subiu 19". */
+function comparacao(a, b, mesA, mesB, { subirRuim = true, compacto = false, hero = false } = {}) {
+  const d = b - a;
+  const dir = d === 0 ? 'neutro' : (d > 0) === subirRuim ? 'ruim' : 'bom';
+  const txt = d === 0 ? 'igual' : compacto ? fInt(Math.abs(d)) : `${d > 0 ? 'subiu' : 'caiu'} ${fInt(Math.abs(d))}`;
+  return h('span', { class: `comp${compacto ? ' comp--compacto' : ''}${hero ? ' comp--hero' : ''}`, title: `${mesNomeCap(mesA)}: ${fInt(a)} → ${mesNomeCap(mesB)}: ${fInt(b)}` },
+    h('span', { class: 'comp__mes' }, h('small', { text: mes3(mesA) }), h('b', { text: fInt(a) })),
+    h('span', { class: 'comp__seta', 'aria-hidden': 'true', text: '→' }),
+    h('span', { class: 'comp__mes comp__mes--b' }, h('small', { text: mes3(mesB) }), h('b', { text: fInt(b) })),
+    h('span', { class: `delta delta--${dir}` }, `${d > 0 ? '▲' : d < 0 ? '▼' : '■'} ${txt}`));
+}
+
 function kpi({ rotulo, valor, sub, dlt, classe = '', canto }) {
   return h('div', { class: `kpi ${classe}` },
     h('p', { class: 'kpi__rotulo' }, h('span', { text: rotulo }), canto || null),
@@ -404,43 +429,107 @@ function heatmap({ linhas, colunas, valor, escala = 'coluna', totalLinha, rotTot
       totalLinha ? h('td', { class: 'tot' }, totalLinha(l.id)) : null)))));
 }
 
+/** Tabela clara "Setembro | Outubro | Diferença". linhas: [{k, rotulo, a, b, d, nota}] */
+function tabelaComparativa(linhas, { mesA, mesB, comChip = false, onclick, rotuloCol = '' } = {}) {
+  const maxD = Math.max(1, ...linhas.map((x) => Math.abs(x.d)));
+  return h('div', { class: 'tab-comp' },
+    h('div', { class: 'tab-comp__cab', 'aria-hidden': 'true' },
+      h('span', { text: rotuloCol }), h('span', { class: 'tab-comp__n', text: mesNomeCap(mesA) }), h('span', { class: 'tab-comp__n', text: mesNomeCap(mesB) }), h('span', { class: 'tab-comp__d', text: 'Diferença' }), h('span', { class: 'tab-comp__barra' })),
+    linhas.map((x) => h(onclick ? 'button' : 'div', {
+      type: onclick ? 'button' : null, class: 'tab-comp__linha', onclick: onclick ? () => onclick(x) : null,
+      'aria-label': `${x.rotulo}: ${mesNomeCap(mesA)} ${x.a}, ${mesNomeCap(mesB)} ${x.b}, diferença ${x.d}`,
+    },
+    h('span', { class: 'tab-comp__rot' }, comChip ? chipCodigo(x.k) : null, h('span', null, h('span', { class: 'tab-comp__nome', text: x.rotulo }), x.nota ? h('small', { text: x.nota }) : null)),
+    h('span', { class: 'tab-comp__n', text: fInt(x.a) }),
+    h('span', { class: 'tab-comp__n tab-comp__n--b', text: fInt(x.b) }),
+    h('span', { class: 'tab-comp__d' }, h('span', { class: `delta delta--${x.d > 0 ? 'ruim' : x.d < 0 ? 'bom' : 'neutro'}`, text: x.d === 0 ? 'igual' : `${x.d > 0 ? '▲ +' : '▼ −'}${fInt(Math.abs(x.d))}` })),
+    h('span', { class: 'tab-comp__barra' }, h('i', { class: x.d > 0 ? 'ruim' : 'bom', style: { width: `${(Math.abs(x.d) / maxD) * 100}%` } })))));
+}
+
 /* ------------------------------------------------------------------ navegação / ações */
-function navegar(view) {
+const PARAMS = { mes: 'mes', area: 'area', parceira: 'parc', codigo: 'cod', motivo: 'mot', eixo: 'eixo', flag: 'flag' };
+const ultimoMes = (ddd) => estado.dados.get(ddd)?.ordem.at(-1);
+function lerHash(hash = window.location.hash) {
+  const m = hash.match(/^#\/(\d{2})\/(\w+)(?:\?(.*))?$/);
+  if (!m) return {};
+  const q = new URLSearchParams(m[3] || '');
+  const r = { ddd: m[1], view: m[2] };
+  for (const [k, p] of Object.entries(PARAMS)) r[k] = q.get(p) || '';
+  return r;
+}
+function montarHash(s) {
+  const q = new URLSearchParams();
+  for (const [k, p] of Object.entries(PARAMS)) if (s[k]) q.set(p, s[k]);
+  const qs = q.toString();
+  return `#/${s.ddd}/${s.view}${qs ? `?${qs}` : ''}`;
+}
+function estadoAtual() {
+  const t = estado.tabela;
+  return { ddd: estado.ddd, view: estado.view, mes: estado.mes, area: estado.area, parceira: estado.parceira, codigo: estado.codigo, motivo: t.motivo, eixo: t.eixo, flag: t.flag };
+}
+/** Vai para um novo estado do painel — vira um passo no histórico (o botão Voltar desfaz). */
+function ir(mudancas = {}, { rolar } = {}) {
+  const atual = estadoAtual();
+  let alvo = { ...atual, ...mudancas };
+  if (alvo.ddd !== atual.ddd) alvo = { ...alvo, mes: '', area: '', parceira: '', codigo: '', motivo: '', eixo: '', flag: '', ...mudancas };
+  if (alvo.view !== 'base' && !('motivo' in mudancas) && !('eixo' in mudancas) && !('flag' in mudancas)) Object.assign(alvo, { motivo: '', eixo: '', flag: '' });
+  if (alvo.mes === ultimoMes(alvo.ddd)) alvo.mes = '';
+  estado.rolarPara = rolar || null;
+  const hash = montarHash(alvo);
+  if (hash === window.location.hash) { aplicarRota(); return; }
+  window.location.hash = hash;
+}
+function voltar() {
+  if (!estado.pilha.length) return;
+  estado.pilha.pop();
+  estado.voltandoPeloBotao = true;
+  window.history.back();
+}
+function descreverHash(hash) {
+  const r = lerHash(hash);
+  const v = VIEWS.find((x) => x.id === r.view);
+  return [v ? v.rotulo : 'tela anterior', r.ddd ? `DDD ${r.ddd}` : null, r.area || null, r.codigo ? `código ${r.codigo}` : null].filter(Boolean).join(' · ');
+}
+
+function navegar(view, extra = {}, opcoes = {}) {
   // Comparativo sem 2 meses neste DDD? Abre direto no DDD que tem (hoje: DDD 14, set → out).
   let ddd = estado.ddd;
   if (view === 'comparativo' && ordemMeses().length < 2) ddd = [...estado.dados.keys()].find((d) => estado.dados.get(d).ordem.length > 1) || ddd;
-  const alvo = `#/${ddd}/${view}`;
-  if (window.location.hash !== alvo) window.location.hash = alvo; else aplicarRota();
+  ir({ view, ddd, ...extra }, opcoes);
 }
+
 function alternarCodigo(c, { irPara } = {}) {
-  estado.codigo = String(estado.codigo) === String(c) ? '' : String(c);
-  estado.tabela.pagina = 0;
-  if (irPara && irPara !== estado.view) navegar(irPara); else renderTudo();
+  const novo = String(estado.codigo) === String(c) ? '' : String(c);
+  ir({ codigo: novo, ...(irPara ? { view: irPara } : {}) }, { rolar: novo ? 'topo' : null });
 }
-function alternarArea(a) {
-  estado.area = estado.area === a ? '' : a;
-  estado.tabela.pagina = 0;
-  renderTudo();
+
+function alternarArea(a, { irPara } = {}) {
+  const novo = estado.area === a ? '' : a;
+  ir({ area: novo, ...(irPara ? { view: irPara } : {}) }, { rolar: novo ? 'topo' : null });
 }
+
 function abrirBase({ motivo = '', eixo = '', flag = '', codigo } = {}) {
-  if (codigo != null) estado.codigo = String(codigo);
-  estado.tabela = { ...estado.tabela, motivo, eixo, flag, pagina: 0 };
-  navegar('base');
+  ir({ view: 'base', motivo, eixo, flag, ...(codigo != null ? { codigo: String(codigo) } : {}) }, { rolar: 'topo' });
 }
-function rolarPara(id) { requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })); }
+
+function rolarPara(id) {
+  requestAnimationFrame(() => {
+    if (id === 'topo') { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
 
 /* ------------------------------------------------------------------ INSIGHTS */
-function insightsDDD(regs, regsAnt, mAnt) {
+function insightsDDD(regs, regsAnt, ant) {
   const total = regs.length;
   const out = [];
   if (!total) return out;
   if (regsAnt && regsAnt.length) {
     const d = total - regsAnt.length;
-    const vc = variacoes(regsAnt, regs, 'bx').filter((x) => x.d !== 0 && Math.sign(x.d) === Math.sign(d)).sort((a, b) => Math.abs(b.d) - Math.abs(a.d));
-    const dr = vc[0];
-    out.push(`As VTs ${d >= 0 ? 'subiram' : 'caíram'} **${fPct(Math.abs(d) / regsAnt.length)}** vs ${mAnt} (${fInt(regsAnt.length)} → ${fInt(total)})${dr ? `, puxadas pelo **${dr.k}** (${descCodigo(dr.k)}: ${fInt(dr.a)} → ${fInt(dr.b)})` : ''}.`);
+    const dr = variacoes(regsAnt, regs, 'bx').filter((x) => x.d !== 0 && Math.sign(x.d) === Math.sign(d)).sort((a, b) => Math.abs(b.d) - Math.abs(a.d))[0];
+    out.push(`Em ${mesNome(estado.mes)} foram **${fInt(total)} visitas**, **${fInt(Math.abs(d))} a ${d >= 0 ? 'mais' : 'menos'}** que em ${mesNome(ant)} (${fInt(regsAnt.length)})${dr ? `. O que mais ${d >= 0 ? 'subiu' : 'caiu'}: **${dr.k}** (${descCodigo(dr.k).toLowerCase()}), de ${fInt(dr.a)} para ${fInt(dr.b)}` : ''}.`);
     const ve = variacoes(regsAnt, regs, 'eixo').filter((x) => !INDEF.has(x.k)).sort((a, b) => b.d - a.d)[0];
-    if (ve && ve.d >= 3) out.push(`O grupo **${rotEixo(ve.k)}** foi o que mais cresceu: ${fInt(ve.a)} → **${fInt(ve.b)} VTs**.`);
+    if (ve && ve.d >= 3) out.push(`O grupo **${rotEixo(ve.k)}** foi o que mais cresceu: de ${fInt(ve.a)} para **${fInt(ve.b)} visitas**.`);
   }
   const cods = ordenar(contar(regs, 'bx'));
   if (!estado.codigo) {
@@ -454,7 +543,7 @@ function insightsDDD(regs, regsAnt, mAnt) {
     out.push(`**${rotEixo(e1)}** é o principal grupo de causas: **${vts(ne)}** (${fPct(ne / total)}) — ${mots.join(', ')}.`);
   }
   const nat = contar(regs, 'natureza');
-  out.push(`**${fPct((nat.get('externa') || 0) / total, 0)}** das VTs têm causa externa (clima, poste, caminhões, terceiros…) e **${fPct((nat.get('operacao') || 0) / total, 0)}** estão na mão da operação Claro (conectorização, equipamento e processo).`);
+  out.push(`**${fPct((nat.get('externa') || 0) / total, 0)}** das visitas têm causa externa (clima, poste, caminhões, terceiros…) e **${fPct((nat.get('operacao') || 0) / total, 0)}** estão na mão da operação Claro (conectorização, equipamento e processo).`);
   if (!estado.area) {
     const [a1, na] = ordenar(contar(regs, 'area'))[0];
     const [ea] = ordenar(contar(regs.filter((r) => r.area === a1 && !INDEF.has(r.eixo)), 'eixo'))[0] || [];
@@ -465,20 +554,20 @@ function insightsDDD(regs, regsAnt, mAnt) {
   if (indef / total >= 0.15) {
     const [p1, np] = vazias.length ? ordenar(contar(vazias, 'parceira'))[0] : [null, 0];
     const fatia = p1 ? regs.filter((r) => r.parceira === p1).length / total : 0;
-    out.push(`**${fPct(indef / total, 0)}** das VTs sem causa identificável — ${fInt(vazias.length)} sem nenhuma observação${p1 && np / vazias.length >= 0.6 ? ` (${fPct(np / vazias.length, 0)} delas da parceira **${p1}**, que fez ${fPct(fatia, 0)} das VTs)` : ''}. Cobrar o registro do porquê melhora esta leitura.`);
+    out.push(`**${fPct(indef / total, 0)}** das visitas sem causa identificável — ${fInt(vazias.length)} sem nenhuma observação${p1 && np / vazias.length >= 0.6 ? ` (${fPct(np / vazias.length, 0)} delas da parceira **${p1}**, que fez ${fPct(fatia, 0)} das visitas)` : ''}. Cobrar o registro do porquê melhora esta leitura.`);
   } else if (vazias.length >= 5) {
     out.push(`**${vts(vazias.length)}** sem observação do técnico (${fPct(vazias.length / total, 0)}).`);
   }
   const agua = regs.filter((r) => r.motivo === 'agua' || r.motivo === 'oxidacao').length;
   if (agua >= 3) out.push(`**${vts(agua)}** com **água ou oxidação** no conector/NAP — efeito direto de chuva e umidade.`);
   const rein = regs.filter((r) => r.log > 0).length;
-  if (rein) out.push(`**${fPct(rein / total)}** das VTs (${fInt(rein)}) já tinham visita anterior registrada (LOG ≥ 1).`);
+  if (rein) out.push(`**${fPct(rein / total)}** das visitas (${fInt(rein)}) já tinham visita anterior registrada (LOG ≥ 1).`);
   const err = regs.filter((r) => r.flags.includes('baixa_errada')).length;
   if (err) out.push(`**${plural(err, 'observação indica', 'observações indicam')}** código de baixa errado — isso distorce o ranking.`);
   return out.slice(0, 8);
 }
 
-function insightsCidade(cidade, regsC, regsDDD, regsCAnt, mAnt) {
+function insightsCidade(cidade, regsC, regsDDD, regsCAnt, ant, max = 4) {
   const n = regsC.length; const N = regsDDD.length;
   const out = [];
   if (!n) return out;
@@ -486,7 +575,7 @@ function insightsCidade(cidade, regsC, regsDDD, regsCAnt, mAnt) {
     const d = n - regsCAnt.length;
     if (Math.abs(d) >= 3) {
       const dr = variacoes(regsCAnt, regsC, 'eixo').filter((x) => x.d !== 0 && Math.sign(x.d) === Math.sign(d) && !INDEF.has(x.k)).sort((a, b) => Math.abs(b.d) - Math.abs(a.d))[0];
-      out.push(`${d > 0 ? 'Alta' : 'Queda'} de **${fSinal(d)} VTs** vs ${mAnt} (${sinal(d)}${fPct(Math.abs(d) / regsCAnt.length, 0)})${dr ? `, puxada por ${rotEixo(dr.k).toLowerCase()} (${fSinal(dr.d)})` : ''}.`);
+      out.push(`${d > 0 ? 'Subiu' : 'Caiu'} de **${fInt(regsCAnt.length)}** em ${mesNome(ant)} para **${fInt(n)}** em ${mesNome(estado.mes)}${dr ? ` — o que mais ${d > 0 ? 'cresceu' : 'caiu'} foi ${rotEixo(dr.k).toLowerCase()} (${fInt(dr.a)} → ${fInt(dr.b)})` : ''}.`);
     }
   }
   const ec = contar(regsC, 'eixo'); const ed = contar(regsDDD, 'eixo');
@@ -496,20 +585,24 @@ function insightsCidade(cidade, regsC, regsDDD, regsCAnt, mAnt) {
   if (cand[0]) {
     const c = cand[0];
     const [m1, nm] = ordenar(contar(regsC.filter((r) => r.eixo === c.e), 'motivo'))[0];
-    out.push(`**${rotEixo(c.e)}** pesa **${fPct(c.sc, 0)}** aqui (média do DDD: ${fPct(c.sd, 0)}) — principalmente ${rotMotivo(m1).toLowerCase()} (${nm}).`);
+    out.push(`**${rotEixo(c.e)}** pesa **${fPct(c.sc, 0)}** aqui, contra ${fPct(c.sd, 0)} na média do DDD — principalmente ${rotMotivo(m1).toLowerCase()} (${nm}).`);
   } else {
     const [e1, v1] = ordenar(new Map([...ec].filter(([e]) => !INDEF.has(e))))[0] || [];
     if (e1) out.push(`Principal causa: **${rotEixo(e1).toLowerCase()}** (${vts(v1)}, ${fPct(v1 / n, 0)}).`);
   }
+  if (cand[1] && max > 4) {
+    const c = cand[1];
+    out.push(`**${rotEixo(c.e)}** também pesa mais que no DDD: ${fPct(c.sc, 0)} aqui contra ${fPct(c.sd, 0)}.`);
+  }
   const ic = regsC.filter((r) => r.natureza === 'indefinida').length / n; const id = regsDDD.filter((r) => r.natureza === 'indefinida').length / N;
-  if (n >= 10 && ic >= 0.3 && ic - id >= 0.05) out.push(`**${fPct(ic, 0)}** das VTs sem causa identificável (DDD: ${fPct(id, 0)}) — observações vagas ou vazias.`);
+  if (n >= 10 && ic >= 0.3 && ic - id >= 0.05) out.push(`**${fPct(ic, 0)}** das visitas sem causa identificável (média do DDD: ${fPct(id, 0)}) — observações vagas ou vazias.`);
   const rc = regsC.filter((r) => r.log > 0).length / n; const rd = regsDDD.filter((r) => r.log > 0).length / N;
-  if (n >= 10 && rc - rd >= 0.06) out.push(`Reincidência de **${fPct(rc, 0)}** (DDD: ${fPct(rd, 0)}).`);
+  if (n >= 10 && rc - rd >= 0.06) out.push(`Reincidência de **${fPct(rc, 0)}** (média do DDD: ${fPct(rd, 0)}).`);
   const naps = ordenar(contar(regsC.filter((r) => r.napId), 'napId'));
   if (naps[0] && naps[0][1] >= 3) out.push(`NAP **${naps[0][0]}** concentrou ${vts(naps[0][1])}.`);
   const vaz = regsC.filter((r) => r.flags.includes('obs_vazia')).length;
-  if (n >= 10 && vaz / n >= 0.2) out.push(`**${fPct(vaz / n, 0)}** das VTs sem observação do técnico.`);
-  return out.slice(0, 4);
+  if (n >= 10 && vaz / n >= 0.2) out.push(`**${fPct(vaz / n, 0)}** das visitas sem observação do técnico.`);
+  return out.slice(0, max);
 }
 
 /* ------------------------------------------------------------------ VIEW: VISÃO GERAL */
@@ -520,7 +613,7 @@ function viewGeral(el) {
   const ant = mesAnterior();
   const regsAnt = ant ? filtrar(regsMes(ant)) : null;
   const mAnt = ant ? mesCurto(ant) : null;
-  if (!total) { el.replaceChildren(cartao({ titulo: 'Sem visitas no filtro atual' }, h('p', { class: 'vazio', text: 'Ajuste os filtros para ver os dados.' }))); return; }
+  if (!total) { montar(el, cartao({ titulo: 'Sem visitas no filtro atual' }, h('p', { class: 'vazio', text: 'Ajuste os filtros para ver os dados.' }))); return; }
 
   const cods = ordenar(contar(regs, 'bx'));
   const [c1, n1] = cods[0];
@@ -530,42 +623,43 @@ function viewGeral(el) {
   if (regsAnt && regsAnt.length) {
     const d = total - regsAnt.length;
     const dr = variacoes(regsAnt, regs, 'bx').filter((x) => x.d !== 0 && Math.sign(x.d) === Math.sign(d)).sort((a, b) => Math.abs(b.d) - Math.abs(a.d))[0];
-    frase = `${d >= 0 ? 'Alta' : 'Queda'} de **${fPct(Math.abs(d) / regsAnt.length, 0)}** sobre ${mAnt}${dr ? `, puxada pelo **${dr.k}** (${descCodigo(dr.k).toLowerCase()}, ${fSinal(dr.d)})` : ''}. Principal grupo de causas: **${rotEixo(e1).toLowerCase()}**.`;
+    frase = d === 0 ? `Mesmo volume de ${mesNome(ant)}. Principal grupo de causas: **${rotEixo(e1).toLowerCase()}**.`
+      : `**${fInt(Math.abs(d))} visitas a ${d > 0 ? 'mais' : 'menos'}** que em ${mesNome(ant)}${dr ? `, principalmente no **${dr.k}** (${descCodigo(dr.k).toLowerCase()}: de ${fInt(dr.a)} para ${fInt(dr.b)})` : ''}. Principal grupo de causas: **${rotEixo(e1).toLowerCase()}**.`;
   } else {
     frase = `O **${c1}** (${descCodigo(c1).toLowerCase()}) lidera com **${fPct(n1 / total, 0)}** das visitas. Principal grupo de causas: **${rotEixo(e1).toLowerCase()}** (${vts(ne1)}).`;
   }
-  const meses = ordemMeses();
-  const serie = meses.map((m) => ({ m, n: filtrar(regsMes(m)).length }));
-  const maxS = Math.max(1, ...serie.map((s) => s.n));
+  const serie = ordemMeses().map((m) => ({ m, n: filtrar(regsMes(m)).length }));
+  const maxS = Math.max(1, ...serie.map((s2) => s2.n));
   const contratos = new Set(regs.map((r) => r.contrato)).size;
 
   const hero = h('section', { class: 'hero' },
     h('div', { style: { position: 'relative', 'z-index': '1' } },
       h('p', { class: 'hero__rotulo', text: `Visitas técnicas · DDD ${estado.ddd} · ${meta.rotulo}` }),
-      h('div', { class: 'hero__valor' }, h('strong', { text: fInt(total) }), delta(total, regsAnt?.length, { mesAnt: mAnt, comPct: true })),
+      h('div', { class: 'hero__valor' }, h('strong', { text: fInt(total) }), regsAnt ? comparacao(regsAnt.length, total, ant, estado.mes, { hero: true }) : null),
       h('p', { class: 'hero__frase' }, rico(frase))),
     h('div', { class: 'hero__lado' },
       serie.length > 1 ? h('div', null,
-        h('div', { class: 'spark', 'aria-label': 'Evolução mensal' }, serie.map((s) => h('i', { class: s.m === estado.mes ? 'atual' : '', style: { height: `${Math.max(6, (s.n / maxS) * 54)}px` } }, h('b', { text: fInt(s.n) })))),
-        h('div', { class: 'spark-rotulos' }, serie.map((s) => h('small', { text: mesCurto(s.m) })))) : null,
+        h('div', { class: 'spark', 'aria-label': 'Evolução mensal' }, serie.map((x) => h('i', { class: x.m === estado.mes ? 'atual' : '', style: { height: `${Math.max(6, (x.n / maxS) * 54)}px` } }, h('b', { text: fInt(x.n) })))),
+        h('div', { class: 'spark-rotulos' }, serie.map((x) => h('small', { text: mesCurto(x.m) })))) : null,
       h('div', { class: 'hero__pilulas' },
         h('span', { class: 'pilula', text: plural(contratos, 'contrato', 'contratos') }),
         h('span', { class: 'pilula', text: plural(new Set(regs.map((r) => r.area)).size, 'cidade', 'cidades') }),
-        h('span', { class: 'pilula', text: plural(cods.length, 'código', 'códigos') }),
-        estado.area || estado.parceira || estado.codigo ? h('span', { class: 'pilula pilula--escura', text: escopoTexto() }) : null)));
+        h('span', { class: 'pilula', text: plural(cods.length, 'código', 'códigos') }))));
 
   const pct = (arr, fn) => (arr && arr.length ? arr.filter(fn).length / arr.length : null);
+  const imp = (r) => norm(r.fato) === 'improdutiva';
   const rein = pct(regs, (r) => r.log > 0); const reinAnt = pct(regsAnt, (r) => r.log > 0);
-  const impr = pct(regs, (r) => norm(r.fato) === 'improdutiva'); const imprAnt = pct(regsAnt, (r) => norm(r.fato) === 'improdutiva');
+  const impr = pct(regs, imp); const imprAnt = pct(regsAnt, imp);
   const base = baseEfetiva(); const baseAnt = ant ? baseEfetiva(ant) : null;
   const taxa = base ? total / base : null; const taxaAnt = baseAnt && regsAnt ? regsAnt.length / baseAnt : null;
   const nAnt1 = regsAnt ? regsAnt.filter((r) => r.bx === c1).length : null;
+  const era = (v, fmt) => (v == null ? '' : ` · era ${fmt(v)} em ${mesNome(ant)}`);
   const kpis = h('div', { class: 'kpis' },
-    kpi({ rotulo: 'Maior ofensor', valor: h('span', null, String(c1), h('small', { text: ` ${descCodigo(c1)}` })), sub: `${vts(n1)} · ${fPct(n1 / total)} do total`, dlt: nAnt1 != null ? delta(n1, nAnt1, { mesAnt: mAnt }) : null }),
-    base ? kpi({ rotulo: 'Taxa de VT sobre a base', valor: fPct(taxa, 2), sub: `${fInt(total)} VTs ÷ ${fInt(base)} assinantes`, dlt: taxaAnt != null ? delta(taxa * 100, taxaAnt * 100, { tipo: 'pp', mesAnt: mAnt }) : null })
+    kpi({ rotulo: 'Maior ofensor', valor: h('span', null, String(c1), h('small', { text: ` ${descCodigo(c1)}` })), sub: `${vts(n1)} · ${fPct(n1 / total)} do total${era(nAnt1, fInt)}`, dlt: nAnt1 != null ? delta(n1, nAnt1, { mesAnt: mAnt }) : null }),
+    base ? kpi({ rotulo: 'Taxa de VT sobre a base', valor: fPct(taxa, 2), sub: `${fInt(total)} VTs ÷ ${fInt(base)} assinantes${era(taxaAnt, (v) => fPct(v, 2))}`, dlt: taxaAnt != null ? delta(taxa * 100, taxaAnt * 100, { tipo: 'pp', mesAnt: mAnt }) : null })
       : kpi({ rotulo: 'Taxa de VT sobre a base', valor: '—', classe: 'kpi--pendente', sub: h('span', null, estado.area ? 'Base por cidade ainda não informada.' : 'Informe a base de assinantes. ', estado.area ? null : h('button', { class: 'link-botao', type: 'button', text: 'Informar', onclick: abrirFiltros })) }),
-    kpi({ rotulo: 'Reincidência', valor: fPct(rein), sub: `${vts(regs.filter((r) => r.log > 0).length)} com visita anterior`, dlt: reinAnt != null ? delta(rein * 100, reinAnt * 100, { tipo: 'pp', mesAnt: mAnt }) : null }),
-    kpi({ rotulo: 'Improdutivas', valor: fPct(impr), sub: `${vts(regs.filter((r) => norm(r.fato) === 'improdutiva').length)} sem reparo executado`, dlt: imprAnt != null ? delta(impr * 100, imprAnt * 100, { tipo: 'pp', mesAnt: mAnt }) : null }));
+    kpi({ rotulo: 'Reincidência', valor: fPct(rein), sub: `${vts(regs.filter((r) => r.log > 0).length)} com visita anterior${era(reinAnt, (v) => fPct(v))}`, dlt: reinAnt != null ? delta(rein * 100, reinAnt * 100, { tipo: 'pp', mesAnt: mAnt }) : null }),
+    kpi({ rotulo: 'Improdutivas', valor: fPct(impr), sub: `${vts(regs.filter(imp).length)} sem reparo executado${era(imprAnt, (v) => fPct(v))}`, dlt: imprAnt != null ? delta(impr * 100, imprAnt * 100, { tipo: 'pp', mesAnt: mAnt }) : null }));
 
   const partes = partesNatureza(regs);
   const natureza = cartao({ titulo: 'Natureza das causas', sub: 'De onde vêm as visitas — em vermelho, o que está na mão da operação.', acao: linkSeta('Causas', () => navegar('causas')) },
@@ -574,27 +668,26 @@ function viewGeral(el) {
       h('i', { class: 'amostra', style: { '--cor': p.cor } }),
       h('div', null, h('strong', { text: p.rotulo }), h('small', { text: NATUREZA.get(p.id).desc })),
       h('p', { class: 'n' }, fInt(p.n), h('small', { text: ` · ${fPct(p.n / total, 0)}` }))))));
-  const itens = insightsDDD(regs, regsAnt, mAnt);
   const leitura = cartao({ titulo: 'Leitura executiva', sub: `Gerada automaticamente · ${escopoTexto()}` },
-    h('ol', { class: 'insights' }, itens.map((t) => h('li', null, rico(t)))));
+    h('ol', { class: 'insights' }, insightsDDD(regs, regsAnt, ant).map((t) => h('li', null, rico(t)))));
 
   const topCods = cods.slice(0, 6);
-  const cardCods = cartao({ titulo: 'Códigos que mais ofenderam', sub: 'Código de baixa principal (BX)', acao: linkSeta('Ranking', () => navegar('codigos')) },
+  const cardCods = cartao({ titulo: 'Códigos que mais ofenderam', sub: 'Clique num código para ver os motivos', acao: linkSeta('Ranking', () => navegar('codigos')) },
     h('div', { class: 'barras' }, topCods.map(([c, n]) => linhaBarra({ prefixo: chipCodigo(c), rotulo: descCodigo(c), n, max: topCods[0][1], cor: corCodigo(c), pct: n / total, classe: 'linha-barra--larga', onclick: () => alternarCodigo(c, { irPara: 'codigos' }) }))));
   const topEixos = eixos.slice(0, 7);
   const cardEixos = cartao({ titulo: 'Principais grupos de causa', sub: 'Causas relacionadas somadas entre todos os códigos', acao: linkSeta('Detalhar', () => navegar('causas')) },
-    h('div', { class: 'barras' }, topEixos.map(([e, n]) => linhaBarra({ rotulo: rotEixo(e), n, max: topEixos[0][1], cor: corEixo(e), pct: n / total, sem: INDEF.has(e), classe: 'linha-barra--larga', onclick: () => { navegar('causas'); rolarPara(`eixo-${e}`); } }))));
+    h('div', { class: 'barras' }, topEixos.map(([e, n]) => linhaBarra({ rotulo: rotEixo(e), n, max: topEixos[0][1], cor: corEixo(e), pct: n / total, sem: INDEF.has(e), classe: 'linha-barra--larga', onclick: () => navegar('causas', {}, { rolar: `eixo-${e}` }) }))));
   const areas = ordenar(contar(filtrar(regsMes(), { area: false }), 'area'));
   const areasAnt = regsAnt ? contar(filtrar(regsMes(ant), { area: false }), 'area') : null;
-  const totalAreas = areas.reduce((s, [, n]) => s + n, 0);
-  const cardAreas = cartao({ titulo: 'Cidades', sub: areasAnt ? `VTs e variação vs ${mAnt}` : 'VTs por cidade / área', acao: linkSeta('Cidades', () => navegar('cidades')) },
+  const totalAreas = areas.reduce((s2, [, n]) => s2 + n, 0);
+  const cardAreas = cartao({ titulo: 'Cidades', sub: areasAnt ? `Visitas em ${mesNome(estado.mes)} e quanto mudou desde ${mesNome(ant)}` : 'Visitas por cidade / área', acao: linkSeta('Cidades', () => navegar('cidades')) },
     h('div', { class: 'barras' }, areas.map(([a, n]) => linhaBarra({
       rotulo: a, n, max: areas[0][1], cor: estado.area && estado.area !== a ? 'var(--seq-2)' : 'var(--claro)', pct: n / totalAreas, classe: areasAnt ? 'linha-barra--delta' : 'linha-barra--larga',
-      extra: areasAnt ? h('span', { class: 'pct' }, delta(n, areasAnt.get(a) || 0, { mesAnt: mAnt }) || '') : null,
-      onclick: () => alternarArea(a), title: `Filtrar ${a}`,
+      extra: areasAnt ? h('span', { class: 'pct', title: `${mesNomeCap(ant)}: ${fInt(areasAnt.get(a) || 0)} → ${mesNomeCap(estado.mes)}: ${fInt(n)}` }, delta(n, areasAnt.get(a) || 0, { mesAnt: mAnt }) || '') : null,
+      onclick: () => alternarArea(a, { irPara: 'cidades' }), title: `Abrir ${a}`,
     }))));
 
-  el.replaceChildren(hero, kpis, h('div', { class: 'g-1-2' }, natureza, leitura), h('div', { class: 'g3' }, cardCods, cardEixos, cardAreas));
+  montar(el, hero, kpis, h('div', { class: 'g-1-2' }, natureza, leitura), h('div', { class: 'g3' }, cardCods, cardEixos, cardAreas));
 }
 
 /* ------------------------------------------------------------------ VIEW: CÓDIGOS */
@@ -613,8 +706,8 @@ function cardCodigo(regs, c) {
   const cab = h('div', { class: 'card-cod__cab' },
     h('div', null,
       h('div', { class: 'card-cod__titulo' }, chipCodigo(c), h('h3', { text: descCodigo(c) })),
-      h('p', { class: 'cartao__sub', text: rc.length ? `${fPct(rc.length / regs.length)} das VTs do filtro` : 'Sem ocorrências no filtro atual' })),
-    h('div', { class: 'card-cod__total' }, h('strong', { text: fInt(rc.length) }), h('span', { text: 'VTs' })));
+      h('p', { class: 'cartao__sub', text: rc.length ? `${fPct(rc.length / regs.length)} das visitas do filtro` : 'Sem ocorrências no filtro atual' })),
+    h('div', { class: 'card-cod__total' }, h('strong', { text: fInt(rc.length) }), h('span', { text: 'visitas' })));
   if (!rc.length) return h('article', { class: 'cartao' }, cab);
   const [a1, na] = ordenar(contar(rc, 'area'))[0];
   const rein = rc.filter((r) => r.log > 0).length;
@@ -622,40 +715,48 @@ function cardCodigo(regs, c) {
     h('div', { class: 'card-pe' },
       h('span', null, 'Mais impactada: ', h('strong', { text: a1 }), ` (${fInt(na)})`),
       h('span', null, 'Reincidência: ', h('strong', { text: fPct(rein / rc.length, 0) })),
-      String(c) !== estado.codigo ? linkSeta('Detalhar', () => { alternarCodigo(c); rolarPara('detalhe-codigo'); }) : null));
+      String(c) !== estado.codigo ? linkSeta('Abrir código', () => alternarCodigo(c)) : null));
 }
 
 function detalheCodigo(regs, c) {
   const rc = regs.filter((r) => r.bx === c);
   if (!rc.length) return cartao({ id: 'detalhe-codigo', titulo: `Código ${c}` }, h('p', { class: 'vazio', text: 'Sem visitas deste código no filtro atual.' }));
+  const ant = mesAnterior();
+  const rcAnt = ant ? filtrar(regsMes(ant), { codigo: false }).filter((r) => r.bx === c) : null;
   const areas = ordenar(contar(rc, 'area'));
   const subf = ordenar(contar(rc, (r) => r.subfalha || '(vazia)')).slice(0, 6);
   const fontes = contar(rc, 'fonteMotivo');
   const eixos = ordenarIndef(contar(rc, 'eixo'));
-  return h('article', { class: 'cartao', id: 'detalhe-codigo' },
+  const col = { display: 'grid', gap: '10px', 'align-content': 'start' };
+  return h('article', { class: 'cartao detalhe-pagina', id: 'detalhe-codigo' },
     h('div', { class: 'card-cod__cab' },
       h('div', null,
-        h('div', { class: 'card-cod__titulo' }, chipCodigo(c), h('h3', { text: `${descCodigo(c)} — detalhamento` })),
-        h('p', { class: 'cartao__sub', text: `${vts(rc.length)} · ${fPct(rc.length / regs.length)} do filtro · família: ${FAMILIA.get(familiaCodigo.get(c))?.rotulo || '—'}` })),
-      h('button', { class: 'botao botao--sec botao--mini', type: 'button', text: 'Remover filtro', onclick: () => alternarCodigo(c) })),
+        h('p', { class: 'cartao__sobre', text: 'Detalhe do código' }),
+        h('div', { class: 'card-cod__titulo' }, chipCodigo(c), h('h2', { class: 'detalhe-pagina__titulo', text: descCodigo(c) })),
+        h('p', { class: 'cartao__sub', text: `${fPct(rc.length / regs.length)} das visitas do filtro · tipo de intervenção: ${FAMILIA.get(familiaCodigo.get(c))?.rotulo || '—'}` })),
+      h('div', { class: 'detalhe-pagina__num' }, h('strong', { text: fInt(rc.length) }), h('span', { text: `visitas em ${mesNome(estado.mes)}` }),
+        rcAnt ? comparacao(rcAnt.length, rc.length, ant, estado.mes) : null)),
     h('div', { class: 'detalhe-cod' },
-      h('div', { style: { display: 'grid', gap: '10px', 'align-content': 'start' } },
-        h('p', { class: 'subtitulo-bloco', text: 'Motivo raiz' }), linhasMotivo(rc, corCodigo(c)),
+      h('div', { style: col },
+        h('p', { class: 'subtitulo-bloco', text: 'Motivo raiz (clique para ver as visitas)' }), linhasMotivo(rc, corCodigo(c)),
         h('p', { class: 'dica', text: `Origem do motivo: ${fInt(fontes.get('obs') || 0)} pela observação · ${fInt(fontes.get('subfalha') || 0)} pela SUBFALHA · ${fInt(fontes.get('causa') || 0)} pela CAUSA · ${fInt(fontes.get('nenhuma') || 0)} sem informação.` })),
-      h('div', { style: { display: 'grid', gap: '10px', 'align-content': 'start' } },
+      h('div', { style: col },
         h('p', { class: 'subtitulo-bloco', text: 'Grupo de causa' }),
         segmentada(eixos.map(([e, n]) => ({ id: e, rotulo: rotEixo(e), n, cor: corEixo(e), clara: naturezaClara(naturezaEixo(e)) })), rc.length, { rotulos: false }),
         h('div', { class: 'legenda' }, eixos.slice(0, 5).map(([e, n]) => h('span', null, h('i', { class: 'amostra', style: { '--cor': corEixo(e) } }), `${rotEixo(e)} (${n})`))),
         h('p', { class: 'subtitulo-bloco', text: 'Onde ocorreu', style: { 'margin-top': '6px' } }),
-        h('div', { class: 'barras' }, areas.map(([a, n]) => linhaBarra({ rotulo: a, n, max: areas[0][1], cor: 'var(--claro)', pct: n / rc.length, onclick: () => alternarArea(a) }))),
+        h('div', { class: 'barras' }, areas.map(([a, n]) => linhaBarra({ rotulo: a, n, max: areas[0][1], cor: 'var(--claro)', pct: n / rc.length, classe: 'linha-barra--larga', onclick: () => alternarArea(a, { irPara: 'cidades' }), title: `Abrir ${a}` }))),
         h('p', { class: 'subtitulo-bloco', text: 'SUBFALHA registrada no sistema', style: { 'margin-top': '6px' } }),
-        h('table', { class: 'mini-tabela' }, h('tbody', null, subf.map(([s, n]) => h('tr', null, h('td', { text: s }), h('td', { class: 'n', text: fInt(n) }))))))));
+        h('table', { class: 'mini-tabela' }, h('tbody', null, subf.map(([sf, n]) => h('tr', null, h('td', { text: sf }), h('td', { class: 'n', text: fInt(n) }))))))),
+    h('div', { class: 'card-pe' },
+      h('button', { class: 'botao botao--sec botao--mini', type: 'button', onclick: () => ir({ codigo: '' }) }, icone('voltar'), 'Ver todos os códigos'),
+      linkSeta(`Ver as ${vts(rc.length)}`, () => abrirBase({ codigo: c }))));
 }
 
 function viewCodigos(el) {
   const regs = filtrar(regsMes(), { codigo: false });
   const total = regs.length;
-  if (!total) { el.replaceChildren(cartao({ titulo: 'Sem visitas no filtro atual' })); return; }
+  if (!total) { montar(el, cartao({ titulo: 'Sem visitas no filtro atual' })); return; }
   const cods = ordenar(contar(regs, 'bx'));
   const max = cods[0][1];
   const base = baseEfetiva();
@@ -665,42 +766,44 @@ function viewCodigos(el) {
   const mostrar = estado.rankTodos ? cods : cods.slice(0, LIM);
   let acum = 0;
   const acumulados = new Map(cods.map(([c, n]) => { acum += n; return [c, acum / total]; }));
-  const top3 = cods.slice(0, 3).reduce((s, [, n]) => s + n, 0);
+  const top3 = cods.slice(0, 3).reduce((s2, [, n]) => s2 + n, 0);
   const vc = regsAnt ? variacoes(regsAnt, regs, 'bx').sort((a, b) => b.d - a.d) : null;
+  const kpiMov = (x, rot) => kpi({ rotulo: rot, valor: h('span', null, String(x.k), h('small', { text: ` ${descCodigo(x.k)}` })), sub: comparacao(x.a, x.b, ant, estado.mes), classe: 'kpi--compacto' });
 
   const kpis = h('div', { class: 'kpis-linha' },
-    kpi({ rotulo: 'Códigos distintos', valor: fInt(cods.length), sub: `em ${vts(total)}`, classe: 'kpi--compacto' }),
-    kpi({ rotulo: 'Concentração', valor: fPct(top3 / total, 0), sub: `nos 3 maiores (${cods.slice(0, 3).map(([c]) => c).join(', ')})`, classe: 'kpi--compacto' }),
-    vc && vc[0] && vc[0].d > 0 ? kpi({ rotulo: `Maior alta vs ${mesCurto(ant)}`, valor: h('span', null, String(vc[0].k), h('small', { text: ` ${descCodigo(vc[0].k)}` })), sub: `${fInt(vc[0].a)} → ${fInt(vc[0].b)} VTs`, dlt: delta(vc[0].b, vc[0].a), classe: 'kpi--compacto' }) : null,
-    vc && vc.at(-1) && vc.at(-1).d < 0 ? kpi({ rotulo: `Maior queda vs ${mesCurto(ant)}`, valor: h('span', null, String(vc.at(-1).k), h('small', { text: ` ${descCodigo(vc.at(-1).k)}` })), sub: `${fInt(vc.at(-1).a)} → ${fInt(vc.at(-1).b)} VTs`, dlt: delta(vc.at(-1).b, vc.at(-1).a), classe: 'kpi--compacto' }) : null);
+    kpi({ rotulo: 'Códigos diferentes', valor: fInt(cods.length), sub: `em ${vts(total)}`, classe: 'kpi--compacto' }),
+    kpi({ rotulo: 'Concentração', valor: fPct(top3 / total, 0), sub: `das visitas estão nos 3 maiores (${cods.slice(0, 3).map(([c]) => c).join(', ')})`, classe: 'kpi--compacto' }),
+    vc && vc[0] && vc[0].d > 0 ? kpiMov(vc[0], `Mais subiu desde ${mesNome(ant)}`) : null,
+    vc && vc.at(-1) && vc.at(-1).d < 0 ? kpiMov(vc.at(-1), `Mais caiu desde ${mesNome(ant)}`) : null);
 
   const cab = h('div', { class: 'linha-rank linha-rank--cab', 'aria-hidden': 'true' },
     h('span', { class: 'pos', text: '#' }), h('span', { text: 'Código' }), h('span', { text: 'Descrição' }), h('span'),
-    h('span', { class: 'val', text: 'VTs' }), h('span', { class: 'pct', text: '% VTs' }), h('span', { class: 'acum', text: 'Acum.' }),
+    h('span', { class: 'val', text: 'Visitas' }), h('span', { class: 'pct', text: '% total' }), h('span', { class: 'acum', text: 'Acum.' }),
     base ? h('span', { class: 'acum', text: 'Taxa' }) : null);
   const linhas = mostrar.map(([c, n], i) => h('button', {
     type: 'button', class: `linha-rank${String(c) === estado.codigo ? ' selecionada' : estado.codigo ? ' atenuada' : ''}`,
-    'aria-pressed': String(String(c) === estado.codigo), 'aria-label': `Código ${c}, ${descCodigo(c)}: ${n} visitas. Filtrar por este código.`,
-    onclick: () => { alternarCodigo(c); if (estado.codigo) rolarPara('detalhe-codigo'); },
+    'aria-pressed': String(String(c) === estado.codigo), 'aria-label': `Código ${c}, ${descCodigo(c)}: ${n} visitas. Abrir detalhe.`,
+    onclick: () => alternarCodigo(c),
   },
   h('span', { class: 'pos', text: String(i + 1) }), chipCodigo(c), h('span', { class: 'desc', text: descCodigo(c) }), barra(n / max, corCodigo(c)),
   h('span', { class: 'val', text: fInt(n) }), h('span', { class: 'pct', text: fPct(n / total) }), h('span', { class: 'acum', text: fPct(acumulados.get(c), 0) }),
-  base ? h('span', { class: 'acum', text: `${fDec((n / base) * 100, 2)} p.p.`, title: 'Contribuição na taxa de VT' }) : null));
-  const soma = mostrar.reduce((s, [, n]) => s + n, 0);
-  const ranking = cartao({ titulo: 'Ranking de códigos de baixa', sub: 'Clique num código para filtrar todo o painel por ele. A cor indica o tipo de intervenção.', acao: h('div', { class: 'legenda so-desktop' }, R.FAMILIAS.map((f) => h('span', null, h('i', { class: 'amostra', style: { '--cor': f.cor } }), f.rotulo))) },
+  base ? h('span', { class: 'acum', text: `${fDec((n / base) * 100, 2)} pts`, title: 'Contribuição na taxa de VT' }) : null));
+  const soma = mostrar.reduce((s2, [, n]) => s2 + n, 0);
+  const ranking = cartao({ titulo: 'Ranking de códigos de baixa', sub: 'Clique num código para abrir o detalhe dele. A cor indica o tipo de intervenção.', acao: h('div', { class: 'legenda so-desktop' }, R.FAMILIAS.map((f) => h('span', null, h('i', { class: 'amostra', style: { '--cor': f.cor } }), f.rotulo))) },
     h('div', { class: `ranking${base ? ' com-pp' : ''}` }, cab, linhas),
     h('div', { class: 'ranking__rodape' },
-      h('p', { class: 'dica', text: estado.rankTodos ? `${cods.length} códigos no filtro atual.` : `Mostrando ${mostrar.length} de ${cods.length} códigos — somam ${fPct(soma / total)} das VTs.` }),
+      h('p', { class: 'dica', text: estado.rankTodos ? `${cods.length} códigos no filtro atual.` : `Mostrando ${mostrar.length} de ${cods.length} códigos — somam ${fPct(soma / total)} das visitas.` }),
       cods.length > LIM ? h('button', { class: 'botao botao--sec botao--mini', type: 'button', text: estado.rankTodos ? `Só os ${LIM} maiores` : `Ver todos os ${cods.length}`, onclick: () => { estado.rankTodos = !estado.rankTodos; renderTudo(); } }) : null));
 
-  const sel = h('label', { class: 'seletor-inline' }, 'Detalhar código:',
-    h('select', { onchange: (e) => { estado.codigo = e.target.value; renderTudo(); if (estado.codigo) rolarPara('detalhe-codigo'); } },
+  const sel = h('label', { class: 'seletor-inline' }, 'Abrir código:',
+    h('select', { onchange: (e) => ir({ codigo: e.target.value }, { rolar: 'topo' }) },
       h('option', { value: '', text: '— escolher —' }),
       cods.map(([c, n]) => { const o = h('option', { value: String(c), text: `${c} · ${descCodigo(c)} (${n})` }); if (String(c) === estado.codigo) o.selected = true; return o; })));
   const destaques = R.CODIGOS_DESTAQUE.filter((c) => String(c) !== estado.codigo);
-  el.replaceChildren(kpis, ranking,
-    secaoTitulo('Por que cada código ofendeu', 'Motivo raiz lido na observação do técnico (com SUBFALHA e CAUSA como apoio). Clique num motivo para ver as visitas.', sel),
+  montar(el, 
     estado.codigo ? detalheCodigo(regs, +estado.codigo) : null,
+    kpis, ranking,
+    secaoTitulo('Por que cada código ofendeu', 'Motivo raiz lido na observação do técnico (com SUBFALHA e CAUSA como apoio). Clique num motivo para ver as visitas.', sel),
     h('div', { class: 'g2' }, destaques.map((c) => cardCodigo(regs, c))));
 }
 
@@ -708,7 +811,7 @@ function viewCodigos(el) {
 function viewCausas(el) {
   const regs = filtrar(regsMes());
   const total = regs.length;
-  if (!total) { el.replaceChildren(cartao({ titulo: 'Sem visitas no filtro atual' })); return; }
+  if (!total) { montar(el, cartao({ titulo: 'Sem visitas no filtro atual' })); return; }
   const ant = mesAnterior();
   const regsAnt = ant ? filtrar(regsMes(ant)) : null;
   const mAnt = ant ? mesCurto(ant) : null;
@@ -742,7 +845,7 @@ function viewCausas(el) {
           h('h3', { style: { '--cor': cor } }, h('i'), e.rotulo),
           h('div', { style: { display: 'flex', gap: '8px', 'margin-top': '6px', 'flex-wrap': 'wrap' } },
             h('span', { class: `tag tag--${e.natureza}`, text: NATUREZA.get(e.natureza).rotulo }),
-            porEixoAnt ? delta(n, porEixoAnt.get(e.id) || 0, { mesAnt: mAnt }) : null)),
+            porEixoAnt ? comparacao(porEixoAnt.get(e.id) || 0, n, ant, estado.mes, { compacto: true }) : null)),
         h('div', { class: 'eixo-n' }, h('strong', { text: fInt(n) }), h('span', { text: `VTs · ${fPct(n / total)}` }))),
       h('p', { class: 'eixo-desc', text: e.desc }),
       h('div', { style: { display: 'grid', gap: '6px' } }, h('p', { class: 'subtitulo-bloco', text: 'Motivos relacionados' }),
@@ -767,12 +870,12 @@ function viewCausas(el) {
       escala: 'linha',
       totalLinha: (e) => [fInt(totEixo.get(e)), h('small', { text: fPct(totEixo.get(e) / regsCid.length, 0) })],
       onLinha: (e) => rolarPara(`eixo-${e}`),
-      onColuna: (a) => alternarArea(a),
+      onColuna: (a) => alternarArea(a, { irPara: 'cidades' }),
       tipLinha: (e, v) => `${fPct(v / totEixo.get(e), 0)} desta causa`,
       tipColuna: (a, v) => `${fPct(v / cidades.find(([x]) => x === a)[1], 0)} das VTs da cidade`,
     }));
 
-  el.replaceChildren(h('div', { class: 'g-1-2' }, cardNat, cardMapa),
+  montar(el, h('div', { class: 'g-1-2' }, cardNat, cardMapa),
     secaoTitulo('Tudo o que está relacionado', 'Cada grupo junta motivos da mesma origem, somando todos os códigos. Ex.: água e oxidação no conector entram em “Chuva, vento e umidade”; o 589 cortado na troca de poste e o 566 rompido pela obra no poste entram em “Poste e concessionária”.'),
     h('div', { class: 'g2' }, cards),
     matriz);
@@ -783,12 +886,67 @@ function resumoCidades() {
   const regsDDD = filtrar(regsMes(), { area: false });
   const ant = mesAnterior();
   const regsAntDDD = ant ? filtrar(regsMes(ant), { area: false }) : null;
-  const mAnt = ant ? mesCurto(ant) : null;
   return ordenar(contar(regsDDD, 'area')).map(([a, n]) => {
     const rc = regsDDD.filter((r) => r.area === a);
     const rca = regsAntDDD ? regsAntDDD.filter((r) => r.area === a) : null;
-    return { a, n, rc, rca, share: n / regsDDD.length, insights: insightsCidade(a, rc, regsDDD, rca, mAnt) };
+    return { a, n, rc, rca, share: n / regsDDD.length, insights: insightsCidade(a, rc, regsDDD, rca, ant) };
   });
+}
+
+function rotEscopoCidade() {
+  if (estado.codigo) return `das visitas do código ${estado.codigo} no DDD`;
+  if (estado.parceira) return `das visitas da ${estado.parceira} no DDD`;
+  return 'das visitas do DDD';
+}
+
+function cartaoCidade(l, ant) {
+  const eixos = ordenar(new Map([...contar(l.rc, 'eixo')].filter(([e]) => !INDEF.has(e)))).slice(0, 3);
+  const cods = ordenar(contar(l.rc, 'bx')).slice(0, 5);
+  const b = metaMes().base_assinantes?.por_regiao?.[l.rc[0].regiao];
+  return h('article', { class: 'cartao cidade' },
+    h('div', { class: 'cidade__cab' },
+      h('div', null, h('h3', { text: l.a }), h('p', { text: `${fPct(l.share)} ${rotEscopoCidade()}${b ? ` · taxa ${fPct(l.n / b, 2)}` : ''}` })),
+      h('div', { class: 'cidade__n' }, h('strong', { text: fInt(l.n) }), h('span', { class: 'kpi__sub', text: 'visitas' }))),
+    l.rca ? comparacao(l.rca.length, l.n, ant, estado.mes) : null,
+    segmentada(partesNatureza(l.rc), l.n, { rotulos: false }),
+    h('div', { style: { display: 'grid', gap: '6px' } }, h('p', { class: 'subtitulo-bloco', text: 'Principais causas' }),
+      h('div', { class: 'barras' }, eixos.map(([e, v]) => linhaBarra({ rotulo: rotEixo(e), n: v, max: eixos[0][1], cor: corEixo(e), pct: v / l.n })))),
+    h('div', { style: { display: 'grid', gap: '6px' } }, h('p', { class: 'subtitulo-bloco', text: 'Códigos' }),
+      h('div', { class: 'chips' }, cods.map(([c, v]) => chipCodigo(c, `×${v}`)))),
+    l.insights.length ? h('ul', { class: 'insights insights--mini' }, l.insights.map((t) => h('li', null, rico(t)))) : null,
+    h('div', { class: 'card-pe' }, linkSeta(`Abrir ${l.a}`, () => alternarArea(l.a))));
+}
+
+function detalheCidade(l, lista, ant) {
+  const regsDDD = filtrar(regsMes(), { area: false });
+  const eixos = ordenarIndef(contar(l.rc, 'eixo'));
+  const cods = ordenar(contar(l.rc, 'bx'));
+  const ins = insightsCidade(l.a, l.rc, regsDDD, l.rca, ant, 6);
+  const vc = l.rca ? variacoes(l.rca, l.rc, 'bx').filter((x) => x.d !== 0).sort((x, y) => y.d - x.d) : [];
+  const mov = [...vc.filter((x) => x.d > 0).slice(0, 5), ...vc.filter((x) => x.d < 0).slice(-5)];
+  const partes = partesNatureza(l.rc);
+  const pos = lista.findIndex((x) => x.a === l.a) + 1;
+  return h('article', { class: 'cartao detalhe-pagina', id: 'detalhe-cidade' },
+    h('div', { class: 'card-cod__cab' },
+      h('div', null,
+        h('p', { class: 'cartao__sobre', text: `Cidade · ${pos}ª em volume no DDD ${estado.ddd}` }),
+        h('h2', { class: 'detalhe-pagina__titulo', text: l.a }),
+        h('p', { class: 'cartao__sub', text: `${fPct(l.share)} ${rotEscopoCidade()}` })),
+      h('div', { class: 'detalhe-pagina__num' }, h('strong', { text: fInt(l.n) }), h('span', { text: `visitas em ${mesNome(estado.mes)}` }),
+        l.rca ? comparacao(l.rca.length, l.n, ant, estado.mes) : null)),
+    segmentada(partes, l.n),
+    h('div', { class: 'legenda' }, partes.filter((x) => x.n).map((x) => h('span', null, h('i', { class: 'amostra', style: { '--cor': x.cor } }), `${x.rotulo}: ${fInt(x.n)}`))),
+    ins.length ? h('div', { class: 'bloco-leitura' }, h('p', { class: 'subtitulo-bloco', text: 'O que está acontecendo' }), h('ol', { class: 'insights' }, ins.map((t) => h('li', null, rico(t))))) : null,
+    h('div', { class: 'g2' },
+      h('div', { style: { display: 'grid', gap: '8px', 'align-content': 'start' } }, h('p', { class: 'subtitulo-bloco', text: 'Grupos de causa (clique para ver as visitas)' }),
+        h('div', { class: 'barras' }, eixos.map(([e, v]) => linhaBarra({ rotulo: rotEixo(e), n: v, max: eixos[0][1], cor: corEixo(e), pct: v / l.n, sem: INDEF.has(e), classe: 'linha-barra--larga', onclick: () => abrirBase({ eixo: e }) })))),
+      h('div', { style: { display: 'grid', gap: '8px', 'align-content': 'start' } }, h('p', { class: 'subtitulo-bloco', text: 'Códigos de baixa' }),
+        h('div', { class: 'barras' }, cods.slice(0, 8).map(([c, v]) => linhaBarra({ prefixo: chipCodigo(c), rotulo: descCodigo(c), n: v, max: cods[0][1], cor: corCodigo(c), pct: v / l.n, classe: 'linha-barra--larga', onclick: () => alternarCodigo(c, { irPara: 'codigos' }) }))))),
+    mov.length ? h('div', { style: { display: 'grid', gap: '8px' } }, h('p', { class: 'subtitulo-bloco', text: `O que mais mudou de ${mesNome(ant)} para ${mesNome(estado.mes)}` }),
+      tabelaComparativa(mov.map((x) => ({ ...x, rotulo: descCodigo(x.k) })), { mesA: ant, mesB: estado.mes, comChip: true, rotuloCol: 'Código', onclick: (x) => alternarCodigo(x.k, { irPara: 'codigos' }) })) : null,
+    h('div', { class: 'card-pe' },
+      h('button', { class: 'botao botao--sec botao--mini', type: 'button', onclick: () => ir({ area: '' }) }, icone('voltar'), 'Ver todas as cidades'),
+      linkSeta(`Ver as ${vts(l.n)} desta cidade`, () => abrirBase())));
 }
 
 function exportarResumoCidades() {
@@ -812,57 +970,41 @@ function exportarResumoCidades() {
 
 function viewCidades(el) {
   const lista = resumoCidades();
-  if (!lista.length) { el.replaceChildren(cartao({ titulo: 'Sem visitas no filtro atual' })); return; }
+  if (!lista.length) { montar(el, cartao({ titulo: 'Sem visitas no filtro atual' })); return; }
   const ant = mesAnterior();
-  const mAnt = ant ? mesCurto(ant) : null;
-  const base = metaMes().base_assinantes?.por_regiao || {};
-  const cards = lista.map((l) => {
-    const eixos = ordenar(new Map([...contar(l.rc, 'eixo')].filter(([e]) => !INDEF.has(e)))).slice(0, 3);
-    const cods = ordenar(contar(l.rc, 'bx')).slice(0, 5);
-    const b = base[l.rc[0].regiao];
-    return h('article', { class: `cartao cidade${estado.area === l.a ? ' selecionada' : ''}` },
-      h('div', { class: 'cidade__cab' },
-        h('div', null, h('h3', { text: l.a }), h('p', { text: `${fPct(l.share)} das VTs do DDD${b ? ` · taxa ${fPct(l.n / b, 2)}` : ''}` })),
-        h('div', { class: 'cidade__n' }, h('strong', { text: fInt(l.n) }), l.rca ? delta(l.n, l.rca.length, { mesAnt: mAnt }) : h('span', { class: 'kpi__sub', text: 'VTs' }))),
-      segmentada(partesNatureza(l.rc), l.n, { rotulos: false }),
-      h('div', { style: { display: 'grid', gap: '6px' } }, h('p', { class: 'subtitulo-bloco', text: 'Principais causas' }),
-        h('div', { class: 'barras' }, eixos.map(([e, v]) => linhaBarra({ rotulo: rotEixo(e), n: v, max: eixos[0][1], cor: corEixo(e), pct: v / l.n })))),
-      h('div', { style: { display: 'grid', gap: '6px' } }, h('p', { class: 'subtitulo-bloco', text: 'Códigos' }),
-        h('div', { class: 'chips' }, cods.map(([c, v]) => chipCodigo(c, `×${v}`)))),
-      l.insights.length ? h('ul', { class: 'insights insights--mini' }, l.insights.map((t) => h('li', null, rico(t)))) : null,
-      h('div', { class: 'card-pe' }, linkSeta(estado.area === l.a ? 'Remover filtro' : `Filtrar ${l.a}`, () => alternarArea(l.a))));
-  });
-
+  const sel = estado.area ? lista.find((l) => l.a === estado.area) : null;
+  const outras = sel ? lista.filter((l) => l !== sel) : lista;
   const regsCid = filtrar(regsMes(), { area: false });
   const topCods = ordenar(contar(regsCid, 'bx')).slice(0, estado.codigo ? 1 : 8).map(([c]) => c);
   const mat = new Map(lista.map((l) => [l.a, contar(l.rc, 'bx')]));
   const totCod = contar(regsCid, 'bx');
-  const matriz = cartao({ titulo: 'Códigos × cidades', sub: 'Em cada código, o ● marca a cidade mais impactada. Clique na cidade para filtrar.', acao: h('span', { class: 'escala so-desktop' }, 'menos', h('i'), h('i'), h('i'), h('i'), h('i'), 'mais') },
+  const matriz = cartao({ titulo: 'Códigos × cidades', sub: 'Em cada código, o ● marca a cidade mais impactada. Clique na cidade para abrir a página dela.', acao: h('span', { class: 'escala so-desktop' }, 'menos', h('i'), h('i'), h('i'), h('i'), h('i'), 'mais') },
     heatmap({
       linhas: lista.map((l) => ({ id: l.a, rotulo: l.a })),
-      colunas: topCods.map((c) => ({ id: c, rotulo: String(c), chip: chipCodigo(c), sub: descCodigo(c), title: `${c} · ${descCodigo(c)} — filtrar` })),
+      colunas: topCods.map((c) => ({ id: c, rotulo: String(c), chip: chipCodigo(c), sub: descCodigo(c), title: `${c} · ${descCodigo(c)} — abrir` })),
       valor: (a, c) => mat.get(a).get(c) || 0,
       escala: 'coluna',
       totalLinha: (a) => { const l = lista.find((x) => x.a === a); return [fInt(l.n), h('small', { text: fPct(l.share, 0) })]; },
       onLinha: (a) => alternarArea(a),
-      onColuna: (c) => alternarCodigo(c),
+      onColuna: (c) => alternarCodigo(c, { irPara: 'codigos' }),
       linhaSel: estado.area || null,
-      tipLinha: (a, v) => `${fPct(v / lista.find((x) => x.a === a).n, 0)} das VTs da cidade`,
+      tipLinha: (a, v) => `${fPct(v / lista.find((x) => x.a === a).n, 0)} das visitas da cidade`,
       tipColuna: (c, v) => `${fPct(v / totCod.get(c), 0)} do código`,
     }));
-
-  el.replaceChildren(
-    secaoTitulo(`${lista.length} cidades / áreas`, `Cada cartão mostra o peso da cidade no DDD${ant ? `, a variação vs ${mAnt}` : ''}, as causas que mais pesam e a leitura do que está acontecendo — comparando com a média do DDD.`,
+  montar(el, 
+    sel ? detalheCidade(sel, lista, ant) : null,
+    secaoTitulo(sel ? 'Outras cidades' : `${lista.length} cidades / áreas`,
+      sel ? 'Clique numa cidade para abrir a página dela.' : `Cada cartão mostra o peso da cidade${ant ? `, quanto mudou de ${mesNome(ant)} para ${mesNome(estado.mes)}` : ''}, as causas que mais pesam e o que está acontecendo — comparando com a média do DDD. Clique para abrir a cidade.`,
       h('button', { class: 'botao botao--sec', type: 'button', onclick: exportarResumoCidades }, icone('download'), 'Exportar resumo (CSV)')),
     h('div', { class: 'legenda' }, R.NATUREZAS.map((n) => h('span', null, h('i', { class: 'amostra', style: { '--cor': n.cor } }), n.rotulo))),
-    h('div', { class: 'g3' }, cards),
+    h('div', { class: 'g3' }, outras.map((l) => cartaoCidade(l, ant))),
     matriz);
 }
 
 /* ------------------------------------------------------------------ VIEW: REINCIDÊNCIA + QUALIDADE */
 function viewReincidencia(el) {
   const regs = filtrar(estado.reinc === 'todos' ? todosRegs() : regsMes());
-  if (!regs.length) { el.replaceChildren(cartao({ titulo: 'Sem visitas no filtro atual' })); return; }
+  if (!regs.length) { montar(el, cartao({ titulo: 'Sem visitas no filtro atual' })); return; }
   const total = regs.length;
   const porContrato = contar(regs, 'contrato');
   const contratosRep = [...porContrato.values()].filter((n) => n > 1);
@@ -934,7 +1076,7 @@ function viewReincidencia(el) {
       qual('Sem informação de motivo', nSem, 'nenhum campo identifica a causa', nSem ? () => abrirBase({ motivo: 'sem_info' }) : null),
       qual('NAP genérica / não cadastrada', nGen, napsGen.slice(0, 3).map(([v, n]) => `${v} (${n})`).join(' · ') || '—', null)));
 
-  el.replaceChildren(
+  montar(el, 
     secaoTitulo('Onde a causa não foi resolvida na primeira ida', 'Endereços e NAPs com mais de uma visita, com a sequência de códigos.', escopo),
     kpis,
     cartao({ titulo: 'Endereços com mais visitas', sub: `${plural(ends.length, 'endereço', 'endereços')} com 2+ VTs${estado.codigo ? ` do código ${estado.codigo}` : ''}. Passe o mouse no código para ver data e motivo.` }, tabEnd),
@@ -944,29 +1086,18 @@ function viewReincidencia(el) {
 }
 
 /* ------------------------------------------------------------------ VIEW: COMPARATIVO */
-function listaVariacao(itens, { maxAbs, comChip }) {
-  if (!itens.length) return h('p', { class: 'vazio', text: 'Nenhuma variação.' });
-  return h('div', { class: 'var-lista' }, itens.map((it) => h('div', { class: `var-linha${comChip ? '' : ' sem-chip'}` },
-    comChip ? chipCodigo(it.k) : null,
-    h('div', { class: 'rot' }, h('span', { text: it.rotulo }), h('small', { text: `${fInt(it.a)} → ${fInt(it.b)} VTs` })),
-    barra(Math.abs(it.d) / maxAbs, it.d > 0 ? 'var(--ruim-marca)' : 'var(--bom-marca)'),
-    h('div', { class: 'd' }, h('span', { class: `delta delta--${it.d > 0 ? 'ruim' : it.d < 0 ? 'bom' : 'neutro'}`, text: `${it.d > 0 ? '▲' : it.d < 0 ? '▼' : '■'} ${fSinal(it.d)}` }), h('small', { text: fPPdif(it.pp) })))));
-}
-
 function viewComparativo(el) {
   const meses = ordemMeses();
   if (meses.length < 2) {
-    el.replaceChildren(cartao({ classe: 'estado-vazio' },
+    const outros = [...estado.dados.keys()].filter((d) => d !== estado.ddd && estado.dados.get(d).ordem.length > 1);
+    montar(el, cartao({ classe: 'estado-vazio' },
       h('div', { class: 'estado-vazio__ilustra', 'aria-hidden': 'true' },
         h('i', { class: 'up', style: { width: '92%' } }), h('i', { class: 'up', style: { width: '64%' } }), h('i', { style: { width: '40%' } }),
         h('i', { class: 'down', style: { width: '55%' } }), h('i', { class: 'down', style: { width: '30%' } })),
       h('div', null,
         h('h3', { text: 'O comparativo liga sozinho a partir do 2º mês' }),
-        h('p', { text: `Hoje o DDD ${estado.ddd} tem 1 mês publicado (${metaMes(meses[0]).rotulo}). Com o próximo mês, esta tela mostra o que mais subiu e caiu em códigos, causas e cidades.` }),
-        ...[...estado.dados.keys()].filter((d) => d !== estado.ddd && estado.dados.get(d).ordem.length > 1).map((d) => {
-          const o = estado.dados.get(d).ordem;
-          return h('button', { class: 'botao botao--primario', type: 'button', style: { 'margin-top': '14px' }, onclick: () => { window.location.hash = `#/${d}/comparativo`; } }, `Ver comparativo do DDD ${d} (${mesCurto(o.at(-2))} → ${mesCurto(o.at(-1))})`, icone('seta'));
-        }))));
+        h('p', { text: `Hoje o DDD ${estado.ddd} tem 1 mês publicado (${metaMes(meses[0]).rotulo}). Com o próximo mês, esta tela mostra o que mais subiu e o que mais caiu.` }),
+        ...outros.map((d) => { const o = estado.dados.get(d).ordem; return h('button', { class: 'botao botao--primario', type: 'button', style: { 'margin-top': '14px' }, onclick: () => ir({ ddd: d, view: 'comparativo' }) }, `Ver comparativo do DDD ${d} (${mesNome(o.at(-2))} → ${mesNome(o.at(-1))})`, icone('seta')); }))));
     return;
   }
   let { a, b } = estado.comp;
@@ -974,96 +1105,82 @@ function viewComparativo(el) {
   if (!a || !meses.includes(a) || a >= b) a = mesAnterior(b);
   estado.comp = { a, b };
   const opcoes = (atual, f) => meses.filter(f).map((m) => { const o = h('option', { value: m, text: metaMes(m).rotulo }); if (m === atual) o.selected = true; return o; });
-  const sel = h('div', { class: 'seletor-inline' },
-    'Comparar', h('select', { 'aria-label': 'Mês atual', onchange: (e) => { estado.comp = { a: null, b: e.target.value }; renderTudo(); } }, opcoes(b, (m) => m !== meses[0])),
+  const sel = h('div', { class: 'seletor-inline seletor-inline--claro' },
+    'Comparar', h('select', { 'aria-label': 'Mês mais recente', onchange: (e) => { estado.comp = { a: null, b: e.target.value }; renderTudo(); } }, opcoes(b, (m) => m !== meses[0])),
     'com', h('select', { 'aria-label': 'Mês de referência', onchange: (e) => { estado.comp.a = e.target.value; renderTudo(); } }, opcoes(a, (m) => m < b)));
 
   const rA = filtrar(regsMes(a), { codigo: false }); const rB = filtrar(regsMes(b), { codigo: false });
   const cA = estado.codigo ? rA.filter((r) => r.bx === +estado.codigo) : rA;
   const cB = estado.codigo ? rB.filter((r) => r.bx === +estado.codigo) : rB;
-  const ma = mesCurto(a); const mb = mesCurto(b);
-  const pct = (arr, fn) => (arr.length ? (arr.filter(fn).length / arr.length) * 100 : 0);
-  const bA = baseEfetiva(a); const bB = baseEfetiva(b);
-  const imp = (r) => norm(r.fato) === 'improdutiva';
-  const kpis = h('div', { class: 'kpis-linha' },
-    kpi({ rotulo: `Total de VTs (${mb})`, valor: fInt(rB.length), dlt: delta(rB.length, rA.length, { mesAnt: ma, comPct: true }), sub: `${ma}: ${fInt(rA.length)}`, classe: 'kpi--compacto' }),
-    bA && bB ? kpi({ rotulo: 'Taxa de VT', valor: fPct(rB.length / bB, 2), dlt: delta((rB.length / bB) * 100, (rA.length / bA) * 100, { tipo: 'pp', mesAnt: ma }), sub: `${ma}: ${fPct(rA.length / bA, 2)}`, classe: 'kpi--compacto' }) : null,
-    kpi({ rotulo: 'Reincidência', valor: `${fDec(pct(rB, (r) => r.log > 0), 1)}%`, dlt: delta(pct(rB, (r) => r.log > 0), pct(rA, (r) => r.log > 0), { tipo: 'pp', mesAnt: ma }), sub: `${ma}: ${fDec(pct(rA, (r) => r.log > 0), 1)}%`, classe: 'kpi--compacto' }),
-    kpi({ rotulo: 'Causas externas', valor: `${fDec(pct(rB, (r) => r.natureza === 'externa'), 0)}%`, dlt: delta(pct(rB, (r) => r.natureza === 'externa'), pct(rA, (r) => r.natureza === 'externa'), { tipo: 'pp', mesAnt: ma }), sub: `${ma}: ${fDec(pct(rA, (r) => r.natureza === 'externa'), 0)}%`, classe: 'kpi--compacto' }),
-    kpi({ rotulo: 'Improdutivas', valor: `${fDec(pct(rB, imp), 1)}%`, dlt: delta(pct(rB, imp), pct(rA, imp), { tipo: 'pp', mesAnt: ma }), sub: `${ma}: ${fDec(pct(rA, imp), 1)}%`, classe: 'kpi--compacto' }));
-
-  const vc = variacoes(rA, rB, 'bx').map((x) => ({ ...x, rotulo: descCodigo(x.k) }));
-
-  // destaques: maior alta e maior queda, com o que puxou cada movimento
-  const alta = vc.filter((x) => x.d > 0).sort((x, y) => y.d - x.d)[0];
-  const queda = vc.filter((x) => x.d < 0).sort((x, y) => x.d - y.d)[0];
-  const destaque = (x, tipo) => {
-    if (!x) return cartao({ classe: 'destaque-var' }, h('p', { class: 'vazio', text: tipo === 'alta' ? 'Nenhum código aumentou.' : 'Nenhum código diminuiu.' }));
-    const dentroA = rA.filter((r) => r.bx === x.k); const dentroB = rB.filter((r) => r.bx === x.k);
-    const motor = variacoes(dentroA, dentroB, 'motivo').filter((m) => Math.sign(m.d) === Math.sign(x.d) && m.k !== 'sem_info').sort((p, q) => Math.abs(q.d) - Math.abs(p.d))[0];
-    return h('article', { class: `cartao destaque-var destaque-var--${tipo}` },
-      h('p', { class: 'destaque-var__sobre' }, tipo === 'alta' ? '▲ Código que mais aumentou' : '▼ Código que mais diminuiu'),
-      h('div', { class: 'destaque-var__cod' }, chipCodigo(x.k), h('strong', { text: descCodigo(x.k) })),
-      h('div', { class: 'destaque-var__nums' },
-        h('span', { class: 'destaque-var__ab' }, h('small', { text: ma }), fInt(x.a)),
-        h('span', { class: 'destaque-var__seta', text: '→' }),
-        h('span', { class: 'destaque-var__ab destaque-var__ab--b' }, h('small', { text: mb }), fInt(x.b)),
-        h('span', { class: 'destaque-var__d' }, `${fSinal(x.d)} VTs`, h('small', { text: x.a ? ` (${sinal(x.d)}${fPct(Math.abs(x.d) / x.a, 0)})` : ' (novo)' }))),
-      h('p', { class: 'destaque-var__sub' }, rico(`Participação: ${fPct(x.a / (rA.length || 1))} → **${fPct(x.b / (rB.length || 1))}** (${fPPdif(x.pp)})${motor ? ` · motivo que mais ${x.d > 0 ? 'cresceu' : 'caiu'}: **${rotMotivo(motor.k).toLowerCase()}** (${fSinal(motor.d)})` : ''}.`)));
+  const d = rB.length - rA.length;
+  const vc = variacoes(rA, rB, 'bx');
+  const sobe = vc.filter((x) => x.d > 0).sort((x, y) => y.d - x.d);
+  const desce = vc.filter((x) => x.d < 0).sort((x, y) => x.d - y.d);
+  const motor = (x) => {
+    const m = variacoes(rA.filter((r) => r.bx === x.k), rB.filter((r) => r.bx === x.k), 'motivo').filter((v) => v.d !== 0 && Math.sign(v.d) === Math.sign(x.d) && v.k !== 'sem_info').sort((p2, q) => Math.abs(q.d) - Math.abs(p2.d))[0];
+    return m ? `${m.d > 0 ? '↑' : '↓'} ${rotMotivo(m.k).toLowerCase()}: ${fInt(m.a)} → ${fInt(m.b)}` : '';
   };
+  const pctTxt = rA.length && d ? ` (${sinal(d)}${fPct(Math.abs(d) / rA.length, 0)})` : '';
+  const frase = (d === 0 ? `**Mesmo número de visitas** em ${mesNome(b)} e ${mesNome(a)}.` : `${mesNomeCap(b)} teve **${fInt(Math.abs(d))} visitas a ${d > 0 ? 'mais' : 'menos'}** que ${mesNome(a)}${pctTxt}.`)
+    + (sobe[0] ? ` Quem mais subiu foi o **${sobe[0].k} (${descCodigo(sobe[0].k).toLowerCase()})**: de ${fInt(sobe[0].a)} para ${fInt(sobe[0].b)}.` : '')
+    + (desce[0] ? ` Quem mais caiu foi o **${desce[0].k} (${descCodigo(desce[0].k).toLowerCase()})**: de ${fInt(desce[0].a)} para ${fInt(desce[0].b)}.` : '');
 
-  // gráfico divergente: diminuiu ◀ | ▶ aumentou
-  const mov = vc.filter((x) => x.d !== 0).sort((x, y) => Math.abs(y.d) - Math.abs(x.d)).slice(0, 12).sort((x, y) => y.d - x.d);
-  const maxMov = Math.max(1, ...mov.map((x) => Math.abs(x.d)));
-  const divergente = h('div', { class: 'diverg' },
-    h('div', { class: 'diverg__cab', 'aria-hidden': 'true' }, h('span'), h('span', { class: 'diverg__menos', text: '◀ diminuiu' }), h('span', { class: 'diverg__mais', text: 'aumentou ▶' }), h('span')),
-    mov.map((x) => h('div', { class: 'diverg__linha', tabindex: '0', dataset: { tip: `${x.k} · ${descCodigo(x.k)}`, tipSub: `${ma}: ${fInt(x.a)} → ${mb}: ${fInt(x.b)} (${fSinal(x.d)} VTs · ${fPPdif(x.pp)})` } },
-      h('span', { class: 'diverg__rot' }, chipCodigo(x.k), h('span', { text: descCodigo(x.k) })),
-      h('span', { class: 'diverg__lado diverg__lado--menos' }, x.d < 0 ? h('i', { style: { width: `${(Math.abs(x.d) / maxMov) * 100}%` } }) : null),
-      h('span', { class: 'diverg__lado diverg__lado--mais' }, x.d > 0 ? h('i', { style: { width: `${(x.d / maxMov) * 100}%` } }) : null),
-      h('span', { class: `diverg__val ${x.d > 0 ? 'ruim' : 'bom'}`, text: fSinal(x.d) }))));
+  const bloco = (m, n, dest) => h('div', { class: `resumo-comp__mes${dest ? ' resumo-comp__mes--b' : ''}` }, h('small', { text: mesNomeCap(m) }), h('strong', { text: fInt(n) }), h('span', { text: 'visitas' }));
+  const resumo = h('section', { class: 'resumo-comp' },
+    h('div', { class: 'resumo-comp__topo' }, h('p', { class: 'hero__rotulo', text: `Comparação mês a mês · DDD ${estado.ddd}${estado.area ? ` · ${estado.area}` : ''}${estado.parceira ? ` · ${estado.parceira}` : ''}` }), sel),
+    h('div', { class: 'resumo-comp__nums' },
+      bloco(a, rA.length), h('span', { class: 'resumo-comp__seta', 'aria-hidden': 'true', text: '→' }), bloco(b, rB.length, true),
+      h('span', { class: `resumo-comp__d resumo-comp__d--${d > 0 ? 'ruim' : d < 0 ? 'bom' : 'neutro'}` }, d === 0 ? 'igual' : `${d > 0 ? '▲' : '▼'} ${fInt(Math.abs(d))} visitas a ${d > 0 ? 'mais' : 'menos'}`)),
+    h('p', { class: 'resumo-comp__frase' }, rico(frase)));
 
-  // antes × depois (halteres) dos maiores códigos
-  const maiores = vc.sort((x, y) => Math.max(y.a, y.b) - Math.max(x.a, x.b)).slice(0, 8);
-  const maxAB = Math.max(1, ...maiores.map((x) => Math.max(x.a, x.b)));
-  const halteres = h('div', { class: 'halteres' },
-    h('div', { class: 'legenda' }, h('span', null, h('i', { class: 'halter__ponto halter__ponto--a' }), metaMes(a).rotulo), h('span', null, h('i', { class: 'halter__ponto halter__ponto--b' }), metaMes(b).rotulo)),
-    maiores.map((x) => {
-      const lo = Math.min(x.a, x.b) / maxAB; const hi = Math.max(x.a, x.b) / maxAB;
-      return h('div', { class: 'halter', tabindex: '0', dataset: { tip: `${x.k} · ${descCodigo(x.k)}`, tipSub: `${ma}: ${fInt(x.a)} → ${mb}: ${fInt(x.b)}` } },
-        h('span', { class: 'diverg__rot' }, chipCodigo(x.k), h('span', { text: descCodigo(x.k) })),
-        h('span', { class: 'halter__trilho' },
-          h('i', { class: `halter__linha ${x.d > 0 ? 'ruim' : x.d < 0 ? 'bom' : ''}`, style: { left: `${lo * 100}%`, width: `${(hi - lo) * 100}%` } }),
-          h('i', { class: 'halter__ponto halter__ponto--a', style: { left: `${(x.a / maxAB) * 100}%` } }),
-          h('i', { class: 'halter__ponto halter__ponto--b', style: { left: `${(x.b / maxAB) * 100}%` } })),
-        h('span', { class: 'halter__val' }, `${fInt(x.a)} → `, h('strong', { text: fInt(x.b) })));
-    }));
-  const ve = variacoes(cA, cB, 'eixo').map((x) => ({ ...x, rotulo: rotEixo(x.k) }));
-  const maxE = Math.max(1, ...ve.map((x) => Math.abs(x.d)));
-  const vm = variacoes(cA, cB, 'motivo').filter((x) => x.d !== 0).map((x) => ({ ...x, rotulo: rotMotivo(x.k) }));
-  const maxM = Math.max(1, ...vm.map((x) => Math.abs(x.d)));
-  const va = variacoes(cA, cB, 'area').map((x) => ({ ...x, rotulo: x.k })).sort((x, y) => y.d - x.d);
-  const maxA = Math.max(1, ...va.map((x) => Math.abs(x.d)));
+  const listaMov = (itens, tipo) => cartao({ sobre: tipo === 'sobe' ? '▲ Subiu' : '▼ Caiu', titulo: tipo === 'sobe' ? 'Os códigos que mais subiram' : 'Os códigos que mais caíram', sub: `De ${mesNome(a)} para ${mesNome(b)} · clique para abrir o código`, classe: `mov mov--${tipo}` },
+    itens.length ? h('div', { class: 'mov__lista' }, itens.slice(0, 5).map((x, i) => {
+      const m = motor(x);
+      return h('button', { type: 'button', class: 'mov__linha', onclick: () => alternarCodigo(x.k, { irPara: 'codigos' }) },
+        h('span', { class: 'mov__pos', text: String(i + 1) }),
+        h('span', { class: 'mov__rot' }, h('span', { class: 'mov__cod' }, chipCodigo(x.k), h('strong', { text: descCodigo(x.k) })), m ? h('small', { text: m }) : null),
+        comparacao(x.a, x.b, a, b));
+    })) : h('p', { class: 'vazio', text: tipo === 'sobe' ? 'Nenhum código subiu.' : 'Nenhum código caiu.' }));
+
+  const pct = (arr, fn) => (arr.length ? arr.filter(fn).length / arr.length : 0);
+  const ind = (rot, fn) => {
+    const va = pct(rA, fn); const vb = pct(rB, fn);
+    return kpi({ rotulo: rot, valor: fPct(vb), dlt: delta(vb * 100, va * 100, { tipo: 'pp' }), sub: `era ${fPct(va)} em ${mesNome(a)}`, classe: 'kpi--compacto' });
+  };
+  const bA = baseEfetiva(a); const bB = baseEfetiva(b);
+  const kpis = h('div', { class: 'kpis-linha' },
+    bA && bB ? kpi({ rotulo: 'Taxa de VT', valor: fPct(rB.length / bB, 2), dlt: delta((rB.length / bB) * 100, (rA.length / bA) * 100, { tipo: 'pp' }), sub: `era ${fPct(rA.length / bA, 2)} em ${mesNome(a)}`, classe: 'kpi--compacto' }) : null,
+    ind('Reincidência', (r) => r.log > 0),
+    ind('Improdutivas', (r) => norm(r.fato) === 'improdutiva'),
+    ind('Causas externas', (r) => r.natureza === 'externa'),
+    ind('Sem causa identificável', (r) => r.natureza === 'indefinida'));
+
+  const movCod = vc.filter((x) => x.d !== 0).sort((x, y) => y.d - x.d);
+  const sobeT = movCod.filter((x) => x.d > 0); const desceT = movCod.filter((x) => x.d < 0);
+  const visiveis = estado.compTodos ? movCod : [...sobeT.slice(0, 7), ...desceT.slice(-7)];
+  const tabCod = cartao({ titulo: `Visitas por código: ${mesNome(a)} × ${mesNome(b)}`, sub: 'Maiores altas em cima, maiores quedas embaixo. Clique para abrir o código.' },
+    tabelaComparativa(visiveis.map((x) => ({ ...x, rotulo: descCodigo(x.k) })), { mesA: a, mesB: b, comChip: true, rotuloCol: 'Código', onclick: (x) => alternarCodigo(x.k, { irPara: 'codigos' }) }),
+    movCod.length > 14 ? h('div', { class: 'ranking__rodape' }, h('p', { class: 'dica', text: `${movCod.length} códigos mudaram de um mês para o outro.` }),
+      h('button', { class: 'botao botao--sec botao--mini', type: 'button', text: estado.compTodos ? 'Mostrar só os maiores' : `Ver todos os ${movCod.length}`, onclick: () => { estado.compTodos = !estado.compTodos; renderTudo(); } })) : null);
+
+  const va = variacoes(cA, cB, 'area').sort((x, y) => y.d - x.d).map((x) => {
+    const dr = variacoes(cA.filter((r) => r.area === x.k), cB.filter((r) => r.area === x.k), 'eixo').filter((v) => v.d !== 0 && Math.sign(v.d) === Math.sign(x.d) && !INDEF.has(v.k)).sort((p2, q) => Math.abs(q.d) - Math.abs(p2.d))[0];
+    return { ...x, rotulo: x.k, nota: dr ? `${x.d > 0 ? 'puxado por' : 'maior queda em'} ${rotEixo(dr.k).toLowerCase()} (${fSinal(dr.d)})` : '' };
+  });
+  const tabCid = cartao({ titulo: 'Por cidade', sub: `${mesNomeCap(a)} × ${mesNomeCap(b)}${estado.codigo ? ` · código ${estado.codigo}` : ''} · clique para abrir a cidade` },
+    tabelaComparativa(va, { mesA: a, mesB: b, rotuloCol: 'Cidade', onclick: (x) => alternarArea(x.k, { irPara: 'cidades' }) }));
+  const ve = variacoes(cA, cB, 'eixo').filter((x) => x.d !== 0).sort((x, y) => y.d - x.d).map((x) => ({ ...x, rotulo: rotEixo(x.k) }));
+  const tabEixo = cartao({ titulo: 'Por grupo de causa', sub: `Causas relacionadas${estado.codigo ? ` · dentro do código ${estado.codigo}` : ''} · clique para ver o grupo` },
+    tabelaComparativa(ve, { mesA: a, mesB: b, rotuloCol: 'Grupo de causa', onclick: (x) => navegar('causas', {}, { rolar: `eixo-${x.k}` }) }));
+
   const totais = meses.map((m) => ({ m, n: filtrar(regsMes(m)).length }));
   const maxT = Math.max(1, ...totais.map((t) => t.n));
-  const sub = estado.codigo ? ` · dentro do código ${estado.codigo}` : '';
+  const evolucao = meses.length >= 3 ? cartao({ titulo: 'Evolução mensal de visitas', sub: escopoTexto() },
+    h('div', { class: 'colunas-mes' }, totais.map((t) => h('div', { class: `coluna-mes${t.m === b ? ' atual' : ''}` },
+      h('b', { text: fInt(t.n) }), h('span', { style: { height: `${(t.n / maxT) * 140}px` }, dataset: { tip: vts(t.n), tipSub: metaMes(t.m).rotulo } })))),
+    h('div', { class: 'rotulos-mes' }, totais.map((t) => h('small', { text: mesCurto(t.m) })))) : null;
 
-  el.replaceChildren(
-    secaoTitulo(`${metaMes(a).rotulo} → ${metaMes(b).rotulo}`, `Variação em VTs e em participação (p.p.) · ${escopoTexto()}`, sel),
-    h('div', { class: 'g2' }, destaque(alta, 'alta'), destaque(queda, 'queda')),
-    kpis,
-    h('div', { class: 'g2' },
-      cartao({ titulo: 'Variação por código', sub: `Os ${mov.length} maiores movimentos de ${ma} para ${mb} (VTs)` }, divergente),
-      cartao({ titulo: 'Antes × depois', sub: 'Os maiores códigos nos dois meses' }, halteres)),
-    h('div', { class: 'g2' },
-      cartao({ titulo: 'Grupos de causa: variação', sub: `Causas relacionadas${sub}` }, listaVariacao(ve.filter((x) => x.d !== 0).sort((x, y) => y.d - x.d), { maxAbs: maxE })),
-      cartao({ titulo: 'Motivos: maiores variações', sub: `Os 10 maiores movimentos${sub}` }, listaVariacao(vm.sort((x, y) => Math.abs(y.d) - Math.abs(x.d)).slice(0, 10).sort((x, y) => y.d - x.d), { maxAbs: maxM }))),
-    h('div', { class: 'g2' },
-      cartao({ titulo: 'Variação por cidade', sub: `${ma} → ${mb}${sub}` }, listaVariacao(va, { maxAbs: maxA })),
-      cartao({ titulo: 'Evolução mensal de VTs', sub: escopoTexto() },
-        h('div', { class: 'colunas-mes' }, totais.map((t) => h('div', { class: `coluna-mes${t.m === b ? ' atual' : ''}` },
-          h('b', { text: fInt(t.n) }), h('span', { style: { height: `${(t.n / maxT) * 140}px` }, dataset: { tip: vts(t.n), tipSub: metaMes(t.m).rotulo } })))),
-        h('div', { class: 'rotulos-mes' }, totais.map((t) => h('small', { text: mesCurto(t.m) }))))));
+  montar(el, resumo, h('div', { class: 'g2' }, listaMov(sobe, 'sobe'), listaMov(desce, 'desce')), kpis, tabCod, h('div', { class: 'g2' }, tabCid, tabEixo), evolucao);
 }
 
 /* ------------------------------------------------------------------ VIEW: BASE */
@@ -1125,19 +1242,14 @@ function corpoTabela() {
 
 function viewBase(el) {
   const t = estado.tabela;
-  const chips = [];
-  const chip = (txt, limpar) => h('span', { class: 'chip-filtro' }, txt, h('button', { type: 'button', 'aria-label': `Remover ${txt}`, text: '×', onclick: () => { limpar(); t.pagina = 0; renderTudo(); } }));
-  if (t.eixo) chips.push(chip(`Grupo: ${rotEixo(t.eixo)}`, () => { t.eixo = ''; }));
-  if (t.motivo) chips.push(chip(`Motivo: ${rotMotivo(t.motivo)}`, () => { t.motivo = ''; }));
-  if (t.flag) chips.push(chip(FLAG_ROTULO[t.flag], () => { t.flag = ''; }));
   const busca = h('input', { type: 'search', placeholder: 'Buscar contrato, endereço, NAP, observação…', value: t.busca, 'aria-label': 'Buscar na base de visitas' });
   let timer;
   busca.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => { t.busca = busca.value; t.pagina = 0; $('#base-corpo').replaceChildren(...corpoTabela()); }, 180); });
-  el.replaceChildren(cartao({ titulo: 'Todas as visitas do filtro', sub: 'Com a observação original do técnico e o motivo identificado.' },
+  const filtro = [t.eixo && `grupo “${rotEixo(t.eixo)}”`, t.motivo && `motivo “${rotMotivo(t.motivo)}”`, t.flag && `“${FLAG_ROTULO[t.flag].toLowerCase()}”`].filter(Boolean).join(' · ');
+  montar(el, cartao({ titulo: 'Visitas do filtro', sub: filtro ? `Mostrando só ${filtro}. Use “Voltar” para retornar de onde você veio.` : 'Com a observação original do técnico e o motivo identificado.' },
     h('div', { class: 'base__ferramentas' },
       h('label', { class: 'busca' }, icone('busca'), h('span', { class: 'sr-only', text: 'Buscar' }), busca),
-      h('div', { class: 'chips', style: { gap: '8px' } }, chips,
-        h('button', { class: 'botao botao--sec', type: 'button', title: 'Baixa as visitas do filtro atual (abre no Excel)', onclick: exportarCSV }, icone('download'), 'Exportar CSV'))),
+      h('button', { class: 'botao botao--sec', type: 'button', title: 'Baixa as visitas do filtro atual (abre no Excel)', onclick: exportarCSV }, icone('download'), 'Exportar CSV')),
     h('div', { id: 'base-corpo', style: { display: 'grid', gap: '12px' } }, corpoTabela())));
 }
 
@@ -1154,22 +1266,22 @@ function renderShell() {
   const view = VIEWS.find((v) => v.id === estado.view);
   const meta = metaMes();
   $('#titulo-view').textContent = view.rotulo;
-  $('#sobretitulo').textContent = `DDD ${estado.ddd} · ${meta.rotulo}${estado.area ? ` · ${estado.area}` : ''}`;
+  $('#sobretitulo').textContent = `DDD ${estado.ddd} · ${meta.rotulo}`;
   document.title = `${view.rotulo} · DDD ${estado.ddd} · Ofensores de VT`;
   $$('[data-ddd-switch] button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.ddd === estado.ddd)));
-  $$('#menu a').forEach((a) => (a.dataset.view === estado.view ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
+  $$('#menu a').forEach((a) => { a.href = `#/${estado.ddd}/${a.dataset.view}`; if (a.dataset.view === estado.view) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
   $$('#abas-mobile button').forEach((b) => {
     const atual = b.dataset.view === estado.view || (b.dataset.view === 'mais' && !VIEWS_ABAS.includes(estado.view));
     if (atual) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
   $$('#folha-mais [data-view]').forEach((b) => (b.dataset.view === estado.view ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current')));
-  $$('.view').forEach((s) => s.classList.toggle('ativa', s.dataset.view === estado.view));
+  $$('.view').forEach((sec) => sec.classList.toggle('ativa', sec.dataset.view === estado.view));
 
   const regs = regsMes();
   const areas = ordenar(contar(regs, 'area'));
   if (estado.area && !areas.some(([a]) => a === estado.area)) areas.push([estado.area, 0]);
   preencherSelect($('#f-area'), areas.map(([a, n]) => [a, `${a} (${n})`]), estado.area, 'Todas as cidades');
-  preencherSelect($('#f-parceira'), ordenar(contar(regs, 'parceira')).map(([p, n]) => [p, `${p} (${n})`]), estado.parceira, 'Todas');
+  preencherSelect($('#f-parceira'), ordenar(contar(regs, 'parceira')).map(([p2, n]) => [p2, `${p2} (${n})`]), estado.parceira, 'Todas');
   const cods = ordenar(contar(filtrar(regs, { codigo: false }), 'bx'));
   if (estado.codigo && !cods.some(([c]) => String(c) === estado.codigo)) cods.push([+estado.codigo, 0]);
   preencherSelect($('#f-codigo'), cods.map(([c, n]) => [c, `${c} · ${descCodigo(c)} (${n})`]), estado.codigo, 'Todos os códigos');
@@ -1181,6 +1293,29 @@ function renderShell() {
   $('#contador-filtros').textContent = String(ativos);
   $('#btn-limpar').hidden = !ativos;
   $('#rodape-fonte').textContent = `Fonte: ${meta.fonte} (aba ${meta.aba}) · processado em ${meta.gerado_em.slice(8, 10)}/${meta.gerado_em.slice(5, 7)}/${meta.gerado_em.slice(0, 4)} · ${fInt(meta.total_linhas)} visitas no mês.`;
+  renderTrilha();
+}
+
+/** Botão Voltar + "Vendo: Cidade Avaré × · Código 566 ×" (cada × desfaz aquele filtro). */
+function renderTrilha() {
+  const trilha = $('#trilha');
+  const partes = [];
+  if (estado.pilha.length) partes.push(h('button', { class: 'voltar', type: 'button', onclick: voltar, title: `Voltar para: ${descreverHash(estado.pilha.at(-1))}` }, icone('voltar'), h('span', { text: 'Voltar' })));
+  const chip = (rot, val, limpar) => h('span', { class: 'chip-trilha' }, h('small', { text: rot }), h('b', { text: val }),
+    h('button', { type: 'button', 'aria-label': `Remover ${rot.toLowerCase()} ${val}`, title: 'Remover este filtro', onclick: limpar }, icone('fechar')));
+  const chips = [];
+  if (estado.area) chips.push(chip('Cidade', estado.area, () => ir({ area: '' }, { rolar: 'topo' })));
+  if (estado.parceira) chips.push(chip('Parceira', estado.parceira, () => ir({ parceira: '' }, { rolar: 'topo' })));
+  if (estado.codigo) chips.push(chip('Código', `${estado.codigo} · ${descCodigo(+estado.codigo)}`, () => ir({ codigo: '' }, { rolar: 'topo' })));
+  if (estado.view === 'base') {
+    const t = estado.tabela;
+    if (t.eixo) chips.push(chip('Grupo', rotEixo(t.eixo), () => ir({ eixo: '' }, { rolar: 'topo' })));
+    if (t.motivo) chips.push(chip('Motivo', rotMotivo(t.motivo), () => ir({ motivo: '' }, { rolar: 'topo' })));
+    if (t.flag) chips.push(chip('Sinal', FLAG_ROTULO[t.flag], () => ir({ flag: '' }, { rolar: 'topo' })));
+  }
+  if (chips.length) partes.push(h('span', { class: 'trilha__rot', text: 'Vendo:' }), ...chips);
+  trilha.replaceChildren(...partes);
+  trilha.hidden = !partes.length;
 }
 
 function renderTudo() {
@@ -1197,16 +1332,29 @@ function trocarDDD(ddd) {
 }
 
 function aplicarRota() {
-  const m = window.location.hash.match(/^#\/(\d{2})\/(\w+)/);
-  let ddd = m?.[1]; let view = m?.[2];
-  if (!estado.dados.has(ddd)) ddd = estado.ddd;
-  if (!VIEWS.some((v) => v.id === view)) view = 'geral';
+  const r = lerHash();
+  const ddd = r.ddd && estado.dados.has(r.ddd) ? r.ddd : estado.ddd;
   if (ddd !== estado.ddd) trocarDDD(ddd);
-  const mudou = view !== estado.view;
+  const ordem = ordemMeses();
+  const mes = ordem.includes(r.mes) ? r.mes : ordem.at(-1);
+  if (mes !== estado.mes) { estado.mes = mes; estado.comp = { a: null, b: null }; }
+  estado.area = r.area || ''; estado.parceira = r.parceira || ''; estado.codigo = r.codigo || '';
+  const t = estado.tabela;
+  if (t.motivo !== (r.motivo || '') || t.eixo !== (r.eixo || '') || t.flag !== (r.flag || '')) t.pagina = 0;
+  t.motivo = r.motivo || ''; t.eixo = r.eixo || ''; t.flag = r.flag || '';
+  const view = VIEWS.some((v) => v.id === r.view) ? r.view : 'geral';
+  const mudouView = view !== estado.view;
   estado.view = view;
   fecharFolhas();
   renderTudo();
-  if (mudou) window.scrollTo(0, 0);
+  const voltou = estado.ultimaNav === 'voltar';
+  estado.ultimaNav = null;
+  if (voltou && estado.posicoes.has(window.location.hash)) {
+    const y = estado.posicoes.get(window.location.hash);
+    requestAnimationFrame(() => window.scrollTo(0, y));
+  } else if (estado.rolarPara) {
+    const id = estado.rolarPara; estado.rolarPara = null; rolarPara(id);
+  } else if (mudouView) window.scrollTo(0, 0);
 }
 
 function abrirFiltros() {
@@ -1225,14 +1373,13 @@ function sair() { esquecerChave(); try { sessionStorage.removeItem('vt-dash-usua
 
 function montarNavegacao() {
   const ddds = R.DDDS.filter((d) => estado.dados.has(d)).concat([...estado.dados.keys()].filter((d) => !R.DDDS.includes(d)));
-  $$('[data-ddd-switch]').forEach((sw) => sw.replaceChildren(...ddds.map((d) => h('button', { type: 'button', role: 'tab', dataset: { ddd: d }, text: `DDD ${d}`, onclick: () => { window.location.hash = `#/${d}/${estado.view}`; } }))));
-  const menu = $('#menu');
-  menu.replaceChildren(...VIEWS.flatMap((v, i) => [i === 4 ? h('div', { class: 'menu__sep' }) : null,
+  $$('[data-ddd-switch]').forEach((sw) => sw.replaceChildren(...ddds.map((d) => h('button', { type: 'button', role: 'tab', dataset: { ddd: d }, text: `DDD ${d}`, onclick: () => { if (d !== estado.ddd) ir({ ddd: d }); } }))));
+  $('#menu').replaceChildren(...VIEWS.flatMap((v, i) => [i === 4 ? h('div', { class: 'menu__sep' }) : null,
     h('a', { href: `#/${estado.ddd}/${v.id}`, dataset: { view: v.id }, onclick: (e) => { e.preventDefault(); navegar(v.id); } }, icone(v.icone), v.rotulo)].filter(Boolean)));
   $('#abas-mobile').replaceChildren(...VIEWS_ABAS.map((id) => VIEWS.find((v) => v.id === id)).map((v) => h('button', { type: 'button', dataset: { view: v.id }, onclick: () => navegar(v.id) }, icone(v.icone), v.curto)),
     h('button', { type: 'button', dataset: { view: 'mais' }, onclick: () => { $('#folha-mais').hidden = false; $('#fundo-mais').hidden = false; } }, icone('mais'), 'Mais'));
-  const nome = estado.usuario ? estado.usuario.split('@')[0].split(/[._-]/).filter(Boolean).map((p) => p[0].toUpperCase() + p.slice(1)).join(' ') : 'Usuário';
-  const iniciais = nome.split(' ').map((p) => p[0]).slice(0, 2).join('');
+  const nome = estado.usuario ? estado.usuario.split('@')[0].split(/[._-]/).filter(Boolean).map((p2) => p2[0].toUpperCase() + p2.slice(1)).join(' ') : 'Usuário';
+  const iniciais = nome.split(' ').map((p2) => p2[0]).slice(0, 2).join('');
   $('#usuario-nome').textContent = nome; $('#usuario-email').textContent = estado.usuario || ''; $('#avatar').textContent = iniciais;
   $('#folha-mais').replaceChildren(
     h('div', { class: 'usuario' }, h('span', { class: 'avatar', text: iniciais }), h('div', null, h('strong', { text: nome }), h('small', { text: estado.usuario || '' }))),
@@ -1245,27 +1392,35 @@ function montarNavegacao() {
 function ligarEventos() {
   if (estado.ligado) return;
   estado.ligado = true;
-  $$('[data-icone]').forEach((s) => s.replaceWith(icone(s.dataset.icone)));
+  $$('[data-icone]').forEach((sp) => sp.replaceWith(icone(sp.dataset.icone)));
   $$('[data-acao="sair"]').forEach((b) => { b.append(icone('sair')); b.addEventListener('click', sair); });
   $$('[data-acao="pdf"]').forEach((b) => b.addEventListener('click', () => window.print()));
   $('#btn-fechar-filtros').append(icone('fechar'));
-  $('#f-mes').addEventListener('change', (e) => { estado.mes = e.target.value; estado.comp = { a: null, b: null }; estado.tabela.pagina = 0; renderTudo(); });
-  $('#f-area').addEventListener('change', (e) => { estado.area = e.target.value; estado.tabela.pagina = 0; renderTudo(); });
-  $('#f-parceira').addEventListener('change', (e) => { estado.parceira = e.target.value; estado.tabela.pagina = 0; renderTudo(); });
-  $('#f-codigo').addEventListener('change', (e) => { estado.codigo = e.target.value; estado.tabela.pagina = 0; renderTudo(); });
+  $('#f-mes').addEventListener('change', (e) => ir({ mes: e.target.value }));
+  $('#f-area').addEventListener('change', (e) => ir({ area: e.target.value }));
+  $('#f-parceira').addEventListener('change', (e) => ir({ parceira: e.target.value }));
+  $('#f-codigo').addEventListener('change', (e) => ir({ codigo: e.target.value }));
   $('#f-base').addEventListener('change', (e) => {
     const v = Math.round(Number(e.target.value)); const k = `${estado.ddd}-${estado.mes}`;
     if (v > 0) estado.base[k] = v; else delete estado.base[k];
     salvarBaseLocal(); renderTudo();
   });
-  $('#btn-limpar').addEventListener('click', () => { estado.area = ''; estado.parceira = ''; estado.codigo = ''; estado.tabela = { busca: '', motivo: '', eixo: '', flag: '', pagina: 0 }; renderTudo(); });
+  $('#btn-limpar').addEventListener('click', () => ir({ area: '', parceira: '', codigo: '', motivo: '', eixo: '', flag: '' }));
   $('#btn-filtros').addEventListener('click', abrirFiltros);
   $('#btn-fechar-filtros').addEventListener('click', fecharFolhas);
   $('#btn-aplicar').addEventListener('click', fecharFolhas);
   $('#fundo-filtros').addEventListener('click', fecharFolhas);
   $('#fundo-mais').addEventListener('click', fecharFolhas);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') fecharFolhas(); });
-  window.addEventListener('hashchange', aplicarRota);
+  window.addEventListener('hashchange', (e) => {
+    const antigo = new URL(e.oldURL).hash;
+    estado.posicoes.set(antigo, window.scrollY);
+    if (estado.voltandoPeloBotao) { estado.voltandoPeloBotao = false; estado.ultimaNav = 'voltar'; }
+    else if (window.location.hash === estado.pilha.at(-1)) { estado.pilha.pop(); estado.ultimaNav = 'voltar'; }
+    else if (antigo) estado.pilha.push(antigo);
+    if (estado.pilha.length > 60) estado.pilha.shift();
+    aplicarRota();
+  });
   window.addEventListener('scroll', () => $('.cabecalho').classList.toggle('rolou', window.scrollY > 4), { passive: true });
   MQ_ESTREITO.addEventListener('change', () => RENDER.causas($('.view[data-view="causas"]')));
 }
@@ -1288,14 +1443,14 @@ async function abrir(chave) {
   for (const g of estado.dados.values()) g.ordem = [...g.meses.keys()].sort();
   calcularCodigos();
   carregarBaseLocal();
-  const m = window.location.hash.match(/^#\/(\d{2})\//);
-  trocarDDD(m && estado.dados.has(m[1]) ? m[1] : (R.DDDS.find((d) => estado.dados.has(d)) || [...estado.dados.keys()][0]));
+  const r = lerHash();
+  trocarDDD(r.ddd && estado.dados.has(r.ddd) ? r.ddd : (R.DDDS.find((d) => estado.dados.has(d)) || [...estado.dados.keys()][0]));
   $('#login').hidden = true;
   $('#carregando').hidden = true;
   $('#app').hidden = false;
   montarNavegacao();
   ligarEventos();
-  if (!/^#\/\d{2}\/\w+/.test(window.location.hash)) window.history.replaceState(null, '', `#/${estado.ddd}/geral`);
+  if (!r.view) window.history.replaceState(null, '', `#/${estado.ddd}/geral`);
   aplicarRota();
 }
 
